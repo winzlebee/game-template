@@ -3,8 +3,8 @@ project(growth C)
 
 find_package(raylib REQUIRED)
 
-add_executable(${PROJECT_NAME}-server src/server.c)
-add_executable(${PROJECT_NAME}-client src/client.c)
+add_executable(${PROJECT_NAME}-server src/server.c src/message.c)
+add_executable(${PROJECT_NAME}-client src/client.c src/message.c)
 
 target_link_libraries(${PROJECT_NAME}-client raylib)
 target_link_libraries(${PROJECT_NAME}-server raylib)
