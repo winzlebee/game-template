@@ -3,6 +3,11 @@ project(growth C)
 
 find_package(raylib REQUIRED)
 
-add_executable(${PROJECT_NAME} src/main.c)
+add_executable(${PROJECT_NAME}-server src/server.c)
+add_executable(${PROJECT_NAME}-client src/client.c)
 
-target_link_libraries(${PROJECT_NAME} raylib)
+target_link_libraries(${PROJECT_NAME}-client raylib)
+target_link_libraries(${PROJECT_NAME}-server raylib)
+
+target_include_directories(${PROJECT_NAME}-client PRIVATE ${CMAKE_SOURCE_DIR}/extern/nbnet)
+target_include_directories(${PROJECT_NAME}-server PRIVATE ${CMAKE_SOURCE_DIR}/extern/nbnet)
