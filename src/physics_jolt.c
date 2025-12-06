@@ -5,7 +5,6 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
 typedef struct PhysicsWorldImpl {
   JPH_JobSystem *jobSystem;
@@ -124,9 +123,6 @@ void PhysicsWorldUpdateBody(PhysicsWorld *world, PhysicsBodyID bodyId, PhysicsBo
 
   JPH_BodyInterface_GetWorldTransform(world->impl->bodyInterface, bodyId,
                                       (JPH_RMat4 *)&body->transform);
-
-  printf("Update body %d: Position: [%.2f, %.2f, %.2f]\n", bodyId,
-         body->transform.m3, body->transform.m7, body->transform.m11);
 
   JPH_BodyInterface_GetLinearAndAngularVelocity(
     world->impl->bodyInterface, bodyId, (JPH_Vec3 *)&body->velocity,
