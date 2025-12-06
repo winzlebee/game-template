@@ -2,6 +2,10 @@
 
 #include "joltc.h"
 
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
+
 // We use a 1-to-1 mapping between object layers and broadphase layers.
 typedef enum {
   BPL_MOVING     = PL_MOVING,
