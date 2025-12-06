@@ -1,7 +1,10 @@
 #include "message.h"
 
 #include "raylib.h"
+#include "rlgl.h"
+
 #include "joltc.h"
+#include "physics.h"
 
 #include <stdio.h>
 
@@ -84,15 +87,28 @@ int main(int argc, char *argv[])
   NBN_GameClient_SetPacketLoss(GetOptions().packet_loss);
   NBN_GameClient_SetPacketDuplication(GetOptions().packet_duplication); 
 
+  PhysicsWorld physics;
+  PhysicsWorldCreate(&physics);
+
+  PhysicsBody floor;
+  floor.params.extents = (Vector3){10.0f, 0.05f, 10.0f};
+  floor.type = PST_BOX;
+  floor.transform = MatrixIdentity();
+
+  PhysicsBody cube;
+  cube.params.extents = (Vector3){2.0f, 2.0f, 2.0f};
+  cube.type = PST_BOX;
+  cube.transform = MatrixTranslate(0.0f, 5.0f, 0.0f);
+
+  PhysicsBodyID floorId = PhysicsWorldAddBody(&physics, &floor, PBT_STATIC);
+  PhysicsBodyID cubeId  = PhysicsWorldAddBody(&physics, &cube, PBT_DYNAMIC);
+
   Camera camera = {0};
   camera.position = (Vector3){10.0f, 10.0f, 10.0f};
   camera.target = (Vector3){0.0f, 0.0f, 0.0f};
   camera.up = (Vector3){0.0f, 1.0f, 0.0f};
   camera.fovy = 45.0f;
   camera.projection = CAMERA_PERSPECTIVE;
-
-  Vector3 cubePosition = {0.0f, 1.0f, 0.0f};
-  Vector3 cubeSize = {2.0f, 2.0f, 2.0f};
 
   Ray ray = {0};
   RayCollision collision = {0};
@@ -101,33 +117,18 @@ int main(int argc, char *argv[])
 
   while (!WindowShouldClose()) {
 
+    const float delta = GetFrameTime();
+    PhysicsWorldUpdate(&physics, delta);
+
     if (IsCursorHidden()) {
       UpdateCamera(&camera, CAMERA_FIRST_PERSON);
     }
 
-    // Toggle camera controls
     if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-      if (IsCursorHidden())
+      if (IsCursorHidden()) {
         EnableCursor();
-      else
-        DisableCursor();
-    }
-
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-        
-      if (!collision.hit) {
-        ray = GetScreenToWorldRay(GetMousePosition(), camera);
-
-        // Check collision between ray and box
-        collision = GetRayCollisionBox(
-            ray, (BoundingBox){(Vector3){cubePosition.x - cubeSize.x / 2,
-                                         cubePosition.y - cubeSize.y / 2,
-                                         cubePosition.z - cubeSize.z / 2},
-                               (Vector3){cubePosition.x + cubeSize.x / 2,
-                                         cubePosition.y + cubeSize.y / 2,
-                                         cubePosition.z + cubeSize.z / 2}});
       } else {
-        collision.hit = false;
+        DisableCursor();
       }
     }
 
@@ -137,16 +138,14 @@ int main(int argc, char *argv[])
 
     BeginMode3D(camera);
 
-    if (collision.hit) {
-      DrawCube(cubePosition, cubeSize.x, cubeSize.y, cubeSize.z, RED);
-      DrawCubeWires(cubePosition, cubeSize.x, cubeSize.y, cubeSize.z, MAROON);
+    rlPushMatrix();
+      PhysicsWorldUpdateBody(&physics, cubeId, &cube);
+      
+      rlLoadIdentity();
+      rlMultMatrixf(&cube.transform.m0);
 
-      DrawCubeWires(cubePosition, cubeSize.x + 0.2f, cubeSize.y + 0.2f,
-                    cubeSize.z + 0.2f, GREEN);
-    } else {
-      DrawCube(cubePosition, cubeSize.x, cubeSize.y, cubeSize.z, GRAY);
-      DrawCubeWires(cubePosition, cubeSize.x, cubeSize.y, cubeSize.z, DARKGRAY);
-    }
+      DrawCubeV(Vector3Zero(), cube.params.extents, GRAY);
+    rlPopMatrix();
 
     DrawRay(ray, MAROON);
     DrawGrid(10, 1.0f);

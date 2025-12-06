@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 typedef struct PhysicsWorldImpl {
   JPH_JobSystem *jobSystem;
@@ -23,12 +24,15 @@ typedef enum {
   BPL_COUNT      = PL_COUNT,
 } BroadPhaseLayer;
 
+static PhysicsWorldImpl g_Impl;
+
 int PhysicsWorldCreate(PhysicsWorld *world)
 {
 	if (!JPH_Init()) {
 		return 1;
   }
 
+  world->impl = &g_Impl;
   world->impl->jobSystem = JPH_JobSystemThreadPool_Create(NULL);
 
 	world->impl->layerPairFilter = JPH_ObjectLayerPairFilterTable_Create(2);
@@ -54,6 +58,8 @@ int PhysicsWorldCreate(PhysicsWorld *world)
 
 	world->impl->system = JPH_PhysicsSystem_Create(&settings);
 	world->impl->bodyInterface = JPH_PhysicsSystem_GetBodyInterface(world->impl->system);
+  
+  world->delta = 1.0f / 60.0f;
 
   return 0;
 }
@@ -81,12 +87,13 @@ PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld* world, const PhysicsBody* body,
 
   MatrixDecompose(body->transform, &position, &rotation, &scale);
 
-  const PhysicsLayer   layer    = (type == PBT_STATIC ? PL_NON_MOVING               : PL_MOVING);
-  const JPH_Activation activate = (type == PBT_STATIC ? JPH_Activation_DontActivate : JPH_Activation_Activate);
+  const PhysicsLayer   layer      = (type == PBT_STATIC ? PL_NON_MOVING               : PL_MOVING);
+  const JPH_Activation activate   = (type == PBT_STATIC ? JPH_Activation_DontActivate : JPH_Activation_Activate);
+  const JPH_MotionType motionType = (type == PBT_STATIC ? JPH_MotionType_Static       : JPH_MotionType_Dynamic);
 
-  JPH_BodyCreationSettings* settings = JPH_BodyCreationSettings_Create3(
-    shape, (const JPH_Vec3*)&position, (const JPH_Quat*)&rotation,
-    JPH_MotionType_Static, layer);
+  JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
+    shape, (const JPH_Vec3 *)&position, (const JPH_Quat *)&rotation, motionType,
+    layer);
 
   const JPH_BodyID id = JPH_BodyInterface_CreateAndAddBody(world->impl->bodyInterface,
                                                            settings, activate);
@@ -94,6 +101,33 @@ PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld* world, const PhysicsBody* body,
   JPH_BodyCreationSettings_Destroy(settings);
 
   return id;
+}
+
+void PhysicsWorldUpdate(PhysicsWorld *world, float delta)
+{
+  // If you take larger steps than 1 / 60th of a second you need to do multiple 
+  // collision steps in order to keep the simulation stable. Do 1 collision step per 1 / 60th of a second (round up).
+  // const int cCollisionSteps = ceilf(delta / world->delta);
+  const int cCollisionSteps = 1;
+
+  JPH_PhysicsSystem_Update(world->impl->system, world->delta, cCollisionSteps, world->impl->jobSystem);
+}
+
+void PhysicsWorldUpdateBody(PhysicsWorld *world, PhysicsBodyID bodyId, PhysicsBody *body)
+{
+  if (!JPH_BodyInterface_IsActive(world->impl->bodyInterface, bodyId)) {
+    return;
+  }
+
+  JPH_BodyInterface_GetWorldTransform(world->impl->bodyInterface, bodyId,
+                                      (JPH_RMat4 *)&body->transform);
+
+  printf("Update body %d: Position: [%.2f, %.2f, %.2f]\n", bodyId,
+         body->transform.m3, body->transform.m7, body->transform.m11);
+
+  JPH_BodyInterface_GetLinearAndAngularVelocity(
+    world->impl->bodyInterface, bodyId, (JPH_Vec3 *)&body->velocity,
+    (JPH_Vec3 *)&body->angularVelocity);
 }
 
 void PhysicsWorldDestroy(PhysicsWorld *world)

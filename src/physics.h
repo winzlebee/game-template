@@ -8,6 +8,7 @@ typedef uint32_t PhysicsBodyID;
 
 typedef struct {
   PhysicsWorldImpl *impl;
+  float delta;
 } PhysicsWorld;
 
 typedef enum {
@@ -39,12 +40,17 @@ typedef struct
 {
   PhysicsShapeParams params;
   PhysicsShapeType type;
+
   Matrix transform;
+  
+  Vector3 velocity;
+  Vector3 angularVelocity;
 } PhysicsBody;
 
-int  PhysicsWorldCreate(PhysicsWorld *world);
+int PhysicsWorldCreate(PhysicsWorld *world);
 
-PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld* world, const PhysicsBody* body,
-                                  PhysicsBodyType type);
+PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld *world, const PhysicsBody *body, PhysicsBodyType type);
+void          PhysicsWorldUpdate(PhysicsWorld *world, float delta);
+void          PhysicsWorldUpdateBody(PhysicsWorld *world, PhysicsBodyID bodyId, PhysicsBody *body);
 
 void PhysicsWorldDestroy(PhysicsWorld *world);
