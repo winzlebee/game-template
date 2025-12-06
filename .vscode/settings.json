@@ -27,6 +27,7 @@
         "joltc.h": "c",
         "raymath.h": "c",
         "cstdint": "c",
-        "__locale": "c"
+        "__locale": "c",
+        "physics.h": "c"
     }
 }

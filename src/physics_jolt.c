@@ -6,6 +6,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct PhysicsWorldImpl {
+  JPH_JobSystem *jobSystem;
+  JPH_ObjectLayerPairFilter *layerPairFilter;
+  JPH_BroadPhaseLayerInterface *broadPhaseLayerInterfaceTable;
+  JPH_ObjectVsBroadPhaseLayerFilter *objectVsBroadPhaseLayerFilter;
+
+  JPH_PhysicsSystem *system;
+  JPH_BodyInterface *bodyInterface;
+} PhysicsWorldImpl;
+
 // We use a 1-to-1 mapping between object layers and broadphase layers.
 typedef enum {
   BPL_MOVING     = PL_MOVING,
@@ -19,17 +29,17 @@ int PhysicsWorldCreate(PhysicsWorld *world)
 		return 1;
   }
 
-  world->jobSystem = JPH_JobSystemThreadPool_Create(NULL);
+  world->impl->jobSystem = JPH_JobSystemThreadPool_Create(NULL);
 
-	world->layerPairFilter = JPH_ObjectLayerPairFilterTable_Create(2);
-	JPH_ObjectLayerPairFilterTable_EnableCollision(world->layerPairFilter, PL_NON_MOVING, PL_MOVING);
-	JPH_ObjectLayerPairFilterTable_EnableCollision(world->layerPairFilter, PL_MOVING, PL_NON_MOVING);
+	world->impl->layerPairFilter = JPH_ObjectLayerPairFilterTable_Create(2);
+	JPH_ObjectLayerPairFilterTable_EnableCollision(world->impl->layerPairFilter, PL_NON_MOVING, PL_MOVING);
+	JPH_ObjectLayerPairFilterTable_EnableCollision(world->impl->layerPairFilter, PL_MOVING, PL_NON_MOVING);
 
-	world->broadPhaseLayerInterfaceTable = JPH_BroadPhaseLayerInterfaceTable_Create(2, 2);
-	JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->broadPhaseLayerInterfaceTable, PL_NON_MOVING, BPL_NON_MOVING);
-	JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->broadPhaseLayerInterfaceTable, PL_MOVING, BPL_MOVING);
+	world->impl->broadPhaseLayerInterfaceTable = JPH_BroadPhaseLayerInterfaceTable_Create(2, 2);
+	JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->impl->broadPhaseLayerInterfaceTable, PL_NON_MOVING, BPL_NON_MOVING);
+	JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->impl->broadPhaseLayerInterfaceTable, PL_MOVING, BPL_MOVING);
 
-	world->objectVsBroadPhaseLayerFilter = JPH_ObjectVsBroadPhaseLayerFilterTable_Create(world->broadPhaseLayerInterfaceTable, 2, world->layerPairFilter, 2);
+	world->impl->objectVsBroadPhaseLayerFilter = JPH_ObjectVsBroadPhaseLayerFilterTable_Create(world->impl->broadPhaseLayerInterfaceTable, 2, world->impl->layerPairFilter, 2);
 
 	JPH_PhysicsSystemSettings settings = {};
 
@@ -38,12 +48,12 @@ int PhysicsWorldCreate(PhysicsWorld *world)
 	settings.maxBodyPairs = 65536;
 	settings.maxContactConstraints = 65536;
 
-	settings.broadPhaseLayerInterface      = world->broadPhaseLayerInterfaceTable;
-	settings.objectLayerPairFilter         = world->layerPairFilter;
-	settings.objectVsBroadPhaseLayerFilter = world->objectVsBroadPhaseLayerFilter;
+	settings.broadPhaseLayerInterface      = world->impl->broadPhaseLayerInterfaceTable;
+	settings.objectLayerPairFilter         = world->impl->layerPairFilter;
+	settings.objectVsBroadPhaseLayerFilter = world->impl->objectVsBroadPhaseLayerFilter;
 
-	world->system = JPH_PhysicsSystem_Create(&settings);
-	world->bodyInterface = JPH_PhysicsSystem_GetBodyInterface(world->system);
+	world->impl->system = JPH_PhysicsSystem_Create(&settings);
+	world->impl->bodyInterface = JPH_PhysicsSystem_GetBodyInterface(world->impl->system);
 
   return 0;
 }
@@ -78,7 +88,7 @@ PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld* world, const PhysicsBody* body,
     shape, (const JPH_Vec3*)&position, (const JPH_Quat*)&rotation,
     JPH_MotionType_Static, layer);
 
-  const JPH_BodyID id = JPH_BodyInterface_CreateAndAddBody(world->bodyInterface,
+  const JPH_BodyID id = JPH_BodyInterface_CreateAndAddBody(world->impl->bodyInterface,
                                                            settings, activate);
 
   JPH_BodyCreationSettings_Destroy(settings);
@@ -88,7 +98,7 @@ PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld* world, const PhysicsBody* body,
 
 void PhysicsWorldDestroy(PhysicsWorld *world)
 {
-  JPH_JobSystem_Destroy(world->jobSystem);
-	JPH_PhysicsSystem_Destroy(world->system);
+  JPH_JobSystem_Destroy(world->impl->jobSystem);
+	JPH_PhysicsSystem_Destroy(world->impl->system);
 	JPH_Shutdown();
 }

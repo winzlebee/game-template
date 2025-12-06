@@ -7,7 +7,7 @@ find_package(raylib REQUIRED)
 add_subdirectory(extern/joltc)
 
 add_executable(${PROJECT_NAME}-server src/server.c src/message.c)
-add_executable(${PROJECT_NAME}-client src/client.c src/message.c src/physics.c)
+add_executable(${PROJECT_NAME}-client src/client.c src/message.c src/physics_jolt.c)
 
 target_link_libraries(${PROJECT_NAME}-client raylib joltc)
 target_link_libraries(${PROJECT_NAME}-server raylib)
