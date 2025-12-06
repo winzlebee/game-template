@@ -24,6 +24,9 @@
         "deque": "c",
         "limits": "c",
         "locale": "c",
-        "joltc.h": "c"
+        "joltc.h": "c",
+        "raymath.h": "c",
+        "cstdint": "c",
+        "__locale": "c"
     }
 }

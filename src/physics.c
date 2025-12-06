@@ -48,6 +48,44 @@ int PhysicsWorldCreate(PhysicsWorld *world)
   return 0;
 }
 
+PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld* world, const PhysicsBody* body,
+                                  PhysicsBodyType type)
+{
+  JPH_Shape *shape = NULL;
+
+  switch (body->type) {
+    case PST_BOX:
+      shape = (JPH_Shape *) JPH_BoxShape_Create((const JPH_Vec3 *) &body->params.extents, JPH_DEFAULT_CONVEX_RADIUS);
+      break;
+    case PST_SPHERE:
+      shape = (JPH_Shape *) JPH_SphereShape_Create(body->params.radius);
+      break;
+    case PST_CYLINDER:
+      shape = (JPH_Shape *) JPH_CylinderShape_Create(body->params.cyl.halfLength, body->params.cyl.radius);
+      break;
+  }
+
+  Vector3    position;
+  Quaternion rotation;
+  Vector3    scale;
+
+  MatrixDecompose(body->transform, &position, &rotation, &scale);
+
+  const PhysicsLayer   layer    = (type == PBT_STATIC ? PL_NON_MOVING               : PL_MOVING);
+  const JPH_Activation activate = (type == PBT_STATIC ? JPH_Activation_DontActivate : JPH_Activation_Activate);
+
+  JPH_BodyCreationSettings* settings = JPH_BodyCreationSettings_Create3(
+    shape, (const JPH_Vec3*)&position, (const JPH_Quat*)&rotation,
+    JPH_MotionType_Static, layer);
+
+  const JPH_BodyID id = JPH_BodyInterface_CreateAndAddBody(world->bodyInterface,
+                                                           settings, activate);
+
+  JPH_BodyCreationSettings_Destroy(settings);
+
+  return id;
+}
+
 void PhysicsWorldDestroy(PhysicsWorld *world)
 {
   JPH_JobSystem_Destroy(world->jobSystem);
