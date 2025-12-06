@@ -2,6 +2,8 @@
 
 #include "raylib.h"
 
+#include <stdio.h>
+
 #define GAME_WIDTH 1280
 #define GAME_HEIGHT 800
 
@@ -54,7 +56,7 @@ int main(int argc, char *argv[])
     return 1;
   }
 
-  InitWindow(GAME_WIDTH, GAME_HEIGHT, "growth by Winfried Holzapfel");
+  InitWindow(GAME_WIDTH, GAME_HEIGHT, "growth by Win Holzapfel");
 
   NBN_UDP_Register();
 
@@ -152,10 +154,11 @@ int main(int argc, char *argv[])
 
     DrawText("Try clicking on the box with your mouse!", 240, 10, 20, DARKGRAY);
 
-    if (collision.hit)
+    if (collision.hit) {
       DrawText("BOX SELECTED",
-               (screenWidth - MeasureText("BOX SELECTED", 30)) / 2,
-               (int)(screenHeight * 0.1f), 30, GREEN);
+               (GAME_WIDTH - MeasureText("BOX SELECTED", 30)) / 2,
+               (int)(GAME_HEIGHT * 0.1f), 30, GREEN);
+    }
 
     DrawText("Right click mouse to toggle camera controls", 10, 430, 10, GRAY);
 
