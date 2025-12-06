@@ -42,7 +42,6 @@ typedef struct {
   float val;
 } UpdateStateMessage;
 
-// Client state, represents a client over the network
 typedef struct {
   uint32_t handle;
 
@@ -56,7 +55,6 @@ typedef struct {
   ClientState client_states[MAX_CLIENTS];
 } GameStateMessage;
 
-// Store all options from the command line
 typedef struct {
   float packet_loss;
   float packet_duplication;

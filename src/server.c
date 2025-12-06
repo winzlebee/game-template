@@ -8,7 +8,7 @@ typedef struct {
   uint32_t clientCount;
 } Server;
 
-Server Server_Create(void)
+Server Server_Create()
 {
   Server s;
 
@@ -218,7 +218,6 @@ int main(int argc, char* argv[])
       (NBN_MessageDestructor)GameStateMessage_Destroy,
       (NBN_MessageSerializer)GameStateMessage_Serialize);
 
-  // Network conditions simulated variables (read from the command line, default is always 0)
   NBN_GameServer_SetPing(GetOptions().ping);
   NBN_GameServer_SetJitter(GetOptions().jitter);
   NBN_GameServer_SetPacketLoss(GetOptions().packet_loss);

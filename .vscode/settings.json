@@ -5,6 +5,24 @@
         "string_view": "c",
         "ranges": "c",
         "span": "c",
-        "vector": "c"
+        "vector": "c",
+        "*.tcc": "c",
+        "charconv": "c",
+        "chrono": "c",
+        "optional": "c",
+        "format": "c",
+        "ratio": "c",
+        "system_error": "c",
+        "functional": "c",
+        "regex": "c",
+        "tuple": "c",
+        "type_traits": "c",
+        "utility": "c",
+        "__bit_reference": "c",
+        "__node_handle": "c",
+        "bitset": "c",
+        "deque": "c",
+        "limits": "c",
+        "locale": "c"
     }
 }

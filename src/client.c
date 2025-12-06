@@ -1,11 +1,85 @@
+#include "message.h"
+
 #include "raylib.h"
 
-int main(void)
-{
-  const int screenWidth = 1200;
-  const int screenHeight = 800;
+#define GAME_WIDTH 1280
+#define GAME_HEIGHT 800
 
-  InitWindow(screenWidth, screenHeight, "growth by Winfried Holzapfel");
+typedef struct {
+  // Current state of the client
+  ClientState state;
+
+  // State of all the other connected clients
+  ClientState otherClientStates[MAX_CLIENTS - 1];
+  uint32_t    otherClientCount;
+
+  // Is the client connected to the server
+  bool connected;
+
+  // Has the client been disconnected from the server
+  bool disconnected;
+
+  // Has the client spawned on the server yet
+  bool spawned;
+
+  // Code the server closed with
+  int serverCode;
+
+} Client;
+
+
+Client Client_Create(void)
+{
+  Client c;
+
+  for (uint32_t i = 0; i < MAX_CLIENTS - 1; ++i) {
+    c.otherClientStates[i].handle = EMPTY_SLOT;
+  }
+
+  c.connected = false;
+  c.disconnected = false;
+  c.spawned = false;
+  c.serverCode = -1;
+
+  return c;
+}
+
+int main(int argc, char *argv[])
+{
+  if (ReadCommandLine(argc, argv)) {
+    printf(
+        "Usage: growth-client [--packet_loss=<value>] [--packet_duplication=<value>] [--ping=<value>] \
+                [--jitter=<value>]\n");
+
+    return 1;
+  }
+
+  InitWindow(GAME_WIDTH, GAME_HEIGHT, "growth by Winfried Holzapfel");
+
+  NBN_UDP_Register();
+
+  if (NBN_GameClient_StartEx(GROWTH_PROTOCOL_NAME, "127.0.0.1",
+                             GROWTH_PORT, NULL, 0) < 0) {
+    TraceLog(LOG_ERROR, "Game client failed to start. Exit");
+    return 1;
+  }
+
+  NBN_GameClient_RegisterMessage(
+      UPDATE_STATE_MESSAGE,
+      (NBN_MessageBuilder)UpdateStateMessage_Create,
+      (NBN_MessageDestructor)UpdateStateMessage_Destroy,
+      (NBN_MessageSerializer)UpdateStateMessage_Serialize);
+
+  NBN_GameClient_RegisterMessage(
+      GAME_STATE_MESSAGE,
+      (NBN_MessageBuilder)GameStateMessage_Create,
+      (NBN_MessageDestructor)GameStateMessage_Destroy,
+      (NBN_MessageSerializer)GameStateMessage_Serialize);
+
+  NBN_GameClient_SetPing(GetOptions().ping);
+  NBN_GameClient_SetJitter(GetOptions().jitter);
+  NBN_GameClient_SetPacketLoss(GetOptions().packet_loss);
+  NBN_GameClient_SetPacketDuplication(GetOptions().packet_duplication); 
 
   Camera camera = {0};
   camera.position = (Vector3){10.0f, 10.0f, 10.0f};

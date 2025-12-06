@@ -16,7 +16,7 @@ enum
   CL_OPT_JITTER,
 };
 
-static Options options = {0};
+static Options g_Options = {0};
 
 SpawnClientMessage* SpawnClientMessage_Create(void)
 {
@@ -103,19 +103,19 @@ int ReadCommandLine(int argc, char *argv[])
   while ((opt = getopt_long(argc, argv, "", long_options, &option_index)) != -1) {
     switch (opt) {
       case CL_OPT_PACKET_LOSS:
-        options.packet_loss = atof(optarg);
+        g_Options.packet_loss = atof(optarg);
         break;
 
       case CL_OPT_PACKET_DUPLICATION:
-        options.packet_duplication = atof(optarg);
+        g_Options.packet_duplication = atof(optarg);
         break;
 
       case CL_OPT_PING:
-        options.ping = atof(optarg);
+        g_Options.ping = atof(optarg);
         break;
 
       case CL_OPT_JITTER:
-        options.jitter = atof(optarg);
+        g_Options.jitter = atof(optarg);
         break;
 
       case '?':
@@ -131,5 +131,5 @@ int ReadCommandLine(int argc, char *argv[])
 
 Options GetOptions(void)
 {
-  return options;
+  return g_Options;
 }
