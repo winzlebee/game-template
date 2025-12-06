@@ -23,6 +23,7 @@
         "bitset": "c",
         "deque": "c",
         "limits": "c",
-        "locale": "c"
+        "locale": "c",
+        "joltc.h": "c"
     }
 }

@@ -1,6 +1,7 @@
 #include "message.h"
 
 #include "raylib.h"
+#include "joltc.h"
 
 #include <stdio.h>
 
