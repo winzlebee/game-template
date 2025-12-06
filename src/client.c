@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
   PhysicsWorldCreate(&physics);
 
   PhysicsBody floor;
-  floor.params.extents = (Vector3){10.0f, 0.05f, 10.0f};
+  floor.params.extents = (Vector3){10.0f, 0.10f, 10.0f};
   floor.type = PST_BOX;
   floor.transform = MatrixIdentity();
 
@@ -100,8 +100,14 @@ int main(int argc, char *argv[])
   cube.type = PST_BOX;
   cube.transform = MatrixTranslate(0.0f, 5.0f, 0.0f);
 
-  PhysicsBodyID floorId = PhysicsWorldAddBody(&physics, &floor, PBT_STATIC);
-  PhysicsBodyID cubeId  = PhysicsWorldAddBody(&physics, &cube, PBT_DYNAMIC);
+  PhysicsBody sphere;
+  sphere.params.radius = 1.0;
+  sphere.type = PST_SPHERE;
+  sphere.transform = MatrixTranslate(0.0f, 8.0f, 1.0f);  
+
+  PhysicsBodyID floorId   = PhysicsWorldAddBody(&physics, &floor, PBT_STATIC);
+  PhysicsBodyID cubeId    = PhysicsWorldAddBody(&physics, &cube, PBT_DYNAMIC);
+  PhysicsBodyID sphereId  = PhysicsWorldAddBody(&physics, &sphere, PBT_DYNAMIC);
 
   Camera camera = {0};
   camera.position = (Vector3){10.0f, 10.0f, 10.0f};
@@ -140,11 +146,20 @@ int main(int argc, char *argv[])
 
     rlPushMatrix();
       PhysicsWorldUpdateBody(&physics, cubeId, &cube);
-      
+
       rlLoadIdentity();
       rlMultMatrixf(&cube.transform.m0);
 
       DrawCubeV(Vector3Zero(), cube.params.extents, GRAY);
+    rlPopMatrix();
+
+    rlPushMatrix();
+      PhysicsWorldUpdateBody(&physics, sphereId, &sphere);
+
+      rlLoadIdentity();
+      rlMultMatrixf(&sphere.transform.m0);
+
+      DrawSphere(Vector3Zero(), sphere.params.radius, GREEN);
     rlPopMatrix();
 
     DrawRay(ray, MAROON);

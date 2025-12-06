@@ -38,6 +38,7 @@ int PhysicsWorldCreate(PhysicsWorld *world)
 	world->impl->layerPairFilter = JPH_ObjectLayerPairFilterTable_Create(2);
 	JPH_ObjectLayerPairFilterTable_EnableCollision(world->impl->layerPairFilter, PL_NON_MOVING, PL_MOVING);
 	JPH_ObjectLayerPairFilterTable_EnableCollision(world->impl->layerPairFilter, PL_MOVING, PL_NON_MOVING);
+	JPH_ObjectLayerPairFilterTable_EnableCollision(world->impl->layerPairFilter, PL_MOVING, PL_MOVING);
 
 	world->impl->broadPhaseLayerInterfaceTable = JPH_BroadPhaseLayerInterfaceTable_Create(2, 2);
 	JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->impl->broadPhaseLayerInterfaceTable, PL_NON_MOVING, BPL_NON_MOVING);
@@ -70,9 +71,11 @@ PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld* world, const PhysicsBody* body,
   JPH_Shape *shape = NULL;
 
   switch (body->type) {
-    case PST_BOX:
-      shape = (JPH_Shape *) JPH_BoxShape_Create((const JPH_Vec3 *) &body->params.extents, JPH_DEFAULT_CONVEX_RADIUS);
+    case PST_BOX: {
+      const Vector3 hExtents = Vector3Scale(body->params.extents, 0.5f);
+      shape = (JPH_Shape *) JPH_BoxShape_Create((const JPH_Vec3 *) &hExtents, JPH_DEFAULT_CONVEX_RADIUS);
       break;
+    }
     case PST_SPHERE:
       shape = (JPH_Shape *) JPH_SphereShape_Create(body->params.radius);
       break;
