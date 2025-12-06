@@ -167,6 +167,8 @@ int main(int argc, char *argv[])
     EndDrawing();
   }
 
+  NBN_GameClient_Stop();
+
   CloseWindow();
 
   return 0;
