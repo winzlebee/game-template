@@ -1,205 +1,224 @@
+#include "ecs.h"
 #include "message.h"
+#include "mesh_manifest.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
+// --- Constants --------------------------------------------------------------
+
+#define FLOOR_HALF_EXTENT 50.0f
+#define PLAYER_SPEED       5.0f
+#define JUMP_SPEED         6.0f
+
 typedef struct {
-  ClientState clients[MAX_CLIENTS];
-  uint32_t clientCount;
-} Server;
+  NBN_ConnectionHandle handle;
+  Entity   entity;
+  Vector3  input;   // latest movement input from client
+  int      jump;    // latest jump flag
+} ClientSlot;
 
-Server Server_Create()
-{
-  Server s;
-
-  for (uint32_t i = 0; i < MAX_CLIENTS; ++i) {
-    s.clients[i].handle = EMPTY_SLOT;
-  }
-
-  return s;
-}
+static ClientSlot  g_Clients[MAX_CLIENTS];
+static uint32_t    g_ClientCount;
+static ECSWorld    g_World;
 
 static Vector3 g_SpawnPoints[] = {
-    (Vector3){0, 0, 10},
-    (Vector3){10, 0, 20},
-    (Vector3){20, 0, 20},
-    (Vector3){10, 0, 0},
+    (Vector3){ -FLOOR_HALF_EXTENT / 2.0f + 1.5f, 0, -FLOOR_HALF_EXTENT / 2.0f + 1.5f },
+    (Vector3){  FLOOR_HALF_EXTENT / 2.0f - 1.5f, 0, -FLOOR_HALF_EXTENT / 2.0f + 1.5f },
+    (Vector3){ -FLOOR_HALF_EXTENT / 2.0f + 1.5f, 0,  FLOOR_HALF_EXTENT / 2.0f - 1.5f },
+    (Vector3){  FLOOR_HALF_EXTENT / 2.0f - 1.5f, 0,  FLOOR_HALF_EXTENT / 2.0f - 1.5f },
 };
 
-static void AcceptConnection(Vector3 spawn, NBN_ConnectionHandle handle)
+// --- Helpers ----------------------------------------------------------------
+
+static void AcceptConnection(Vector3 spawn, NBN_ConnectionHandle handle, uint32_t netId)
 {
   NBN_WriteStream ws;
   uint8_t data[sizeof(SpawnClientMessage)];
 
   NBN_WriteStream_Init(&ws, data, sizeof(SpawnClientMessage));
 
-  SpawnClientMessage scm;
-  scm.sX = spawn.x, scm.sY = spawn.y, scm.sZ = spawn.z;
-  scm.handle = handle;
-
-  SpawnClientMessage_Serialize(&scm, (NBN_Stream *) &ws);
+  SpawnClientMessage scm = {
+    .sX = spawn.x, .sY = spawn.y, .sZ = spawn.z,
+    .netId = netId,
+    .handle = handle
+  };
+  SpawnClientMessage_Serialize(&scm, (NBN_Stream *)&ws);
   NBN_GameServer_AcceptIncomingConnectionWithData(data, sizeof(data));
 }
 
-static int HandleNewConnection(Server *server)
+static ClientSlot *FindSlotByHandle(NBN_ConnectionHandle h)
 {
-  TraceLog(LOG_INFO, "New connection");
-
-  if (server->clientCount == MAX_CLIENTS) {
-    TraceLog(LOG_INFO, "Connection rejected. Server %p is full.", server);
-    NBN_GameServer_RejectIncomingConnectionWithCode(SERVER_FULL_CODE);
-    return 0;
-  }
-
-  NBN_ConnectionHandle clientHandle;
-
-  clientHandle = NBN_GameServer_GetIncomingConnection();
-
-  const Vector3 spawn = g_SpawnPoints[clientHandle % MAX_CLIENTS];
-
-  AcceptConnection(spawn, clientHandle);
-
-  TraceLog(LOG_INFO, "Connection accepted (ID: %d)", clientHandle);
-
-  ClientState *client = NULL;
-
-  // Find the first empty slot and assign the client to it
-  for (int i = 0; i < MAX_CLIENTS; i++) {
-    if (server->clients[i].handle == EMPTY_SLOT) {
-      client = &server->clients[i];
-      break;
-    }
-  }
-
-  *client = (ClientState){.handle = client->handle, .x = 0, .y = 0, .z = 0, .val = 0};
-
-  server->clientCount++;
-
-  return 0;
-}
-
-static ClientState *FindClientById(Server *server, uint32_t client_id)
-{
-  for (int i = 0; i < MAX_CLIENTS; i++) {
-    if (server->clients[i].handle == client_id) {
-      return &server->clients[i];
-    }
-  }
-
+  for (uint32_t i = 0; i < MAX_CLIENTS; i++)
+    if (g_Clients[i].handle == h) return &g_Clients[i];
   return NULL;
 }
 
-static void DestroyClient(ClientState *client)
+static ClientSlot *FindEmptySlot(void)
 {
-  client->handle = EMPTY_SLOT;
+  for (uint32_t i = 0; i < MAX_CLIENTS; i++)
+    if (g_Clients[i].handle == EMPTY_SLOT) return &g_Clients[i];
+  return NULL;
 }
 
-static void HandleClientDisconnection(Server *server)
+// --- Server events ----------------------------------------------------------
+
+static void HandleNewConnection(void)
 {
-  NBN_ConnectionHandle handle =
-      NBN_GameServer_GetDisconnectedClient();
+  TraceLog(LOG_INFO, "New connection");
 
-  TraceLog(LOG_INFO, "Client has disconnected (id: %d)", handle);
+  if (g_ClientCount == MAX_CLIENTS) {
+    TraceLog(LOG_INFO, "Connection rejected. Server is full.");
+    NBN_GameServer_RejectIncomingConnectionWithCode(SERVER_FULL_CODE);
+    return;
+  }
 
-  ClientState *client = FindClientById(server, handle);
+  NBN_ConnectionHandle handle = NBN_GameServer_GetIncomingConnection();
+  Vector3 spawn = Vector3Zero();//g_SpawnPoints[handle % MAX_CLIENTS];
 
-  DestroyClient(client);
+  Entity e = ECS_CreateEntity(&g_World);
+  uint32_t netId = ECS_GetNetId(&g_World, e);
 
-  server->clientCount--;
+  AcceptConnection(spawn, handle, netId);
+
+  ECS_AddCharacter(&g_World, e, spawn, PLAYER_SPEED, JUMP_SPEED);
+
+  uint32_t meshIndex = (uint32_t)(rand() % MESH_COUNT);
+  ECS_AddMesh(&g_World, e, meshIndex);
+
+  ClientSlot *slot = FindEmptySlot();
+  memset(slot, 0, sizeof(*slot));
+  slot->handle = handle;
+  slot->entity = e;
+  g_ClientCount++;
+
+  TraceLog(LOG_INFO, "Player connected (handle: %d, netId: %u, mesh: %u)",
+           handle, netId, meshIndex);
 }
 
-static void HandleUpdateStateMessage(UpdateStateMessage* msg, ClientState *sender)
+static void HandleClientDisconnection(void)
 {
-  sender->x = msg->x;
-  sender->y = msg->y;
-  sender->z = msg->z;
+  NBN_ConnectionHandle handle = NBN_GameServer_GetDisconnectedClient();
+  TraceLog(LOG_INFO, "Client disconnected (handle: %d)", handle);
 
-  sender->val = msg->val;
-
-  UpdateStateMessage_Destroy(msg);
-}
-
-static void HandleReceivedMessage(Server *server)
-{
-  // Fetch info about the last received message
-  NBN_MessageInfo msg_info = NBN_GameServer_GetMessageInfo();
-
-  // Find the client that sent the message
-  ClientState *sender = FindClientById(server, msg_info.sender);
-
-  assert(sender != NULL && "Client that sent the message is not connected to the server");
-
-  switch (msg_info.type) {
-    case UPDATE_STATE_MESSAGE:
-      // The server received a client state update
-      HandleUpdateStateMessage(msg_info.data, sender);
-      break;
+  ClientSlot *slot = FindSlotByHandle(handle);
+  if (slot) {
+    ECS_DestroyEntity(&g_World, slot->entity);
+    slot->handle = EMPTY_SLOT;
+    slot->entity = INVALID_ENTITY;
+    g_ClientCount--;
   }
 }
 
-static int HandleGameServerEvent(Server *server, int ev)
+static void HandleReceivedMessage(void)
+{
+  NBN_MessageInfo info = NBN_GameServer_GetMessageInfo();
+  ClientSlot *slot = FindSlotByHandle(info.sender);
+
+  if (!slot) {
+    // The client sent a message for a slot that doesn't exist.
+    // Either we have a bug, or they're an untrusted client...
+    return;
+  }
+
+  switch (info.type) {
+    case UPDATE_STATE_MESSAGE: {
+      PlayerInputMessage *msg = info.data;
+      slot->input = (Vector3){msg->x, 0.0f, msg->z};
+      slot->jump  = msg->jump;
+      PlayerInputMessage_Destroy(msg);
+      break;
+    }
+  }
+}
+
+static int HandleGameServerEvent(int ev)
 {
   switch (ev) {
-    case NBN_NEW_CONNECTION:
-      // A new client has requested a connection
-      if (HandleNewConnection(server) < 0)
-        return -1;
-      break;
-
-    case NBN_CLIENT_DISCONNECTED:
-      // A previously connected client has disconnected
-      HandleClientDisconnection(server);
-      break;
-
-    case NBN_CLIENT_MESSAGE_RECEIVED:
-      // A message from a client has been received
-      HandleReceivedMessage(server);
-      break;
+    case NBN_NEW_CONNECTION:       HandleNewConnection();        break;
+    case NBN_CLIENT_DISCONNECTED:  HandleClientDisconnection();  break;
+    case NBN_CLIENT_MESSAGE_RECEIVED: HandleReceivedMessage();   break;
   }
-
   return 0;
 }
 
-// Broadcasts the latest game state to all connected clients
-static int BroadcastGameState(Server *server)
-{
-  for (int i = 0; i < MAX_CLIENTS; i++) {
-    ClientState *client = &server->clients[i];
+// --- Tick: apply buffered input to all characters ---------------------------
 
-    if (client->handle == EMPTY_SLOT) {
-      // Client isn't connected. No need to send them the client state.
+static void ApplyAllCharacterInputs(float delta)
+{
+  for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+
+    if (g_Clients[i].handle == EMPTY_SLOT) {
       continue;
     }
 
-    GameStateMessage* msg = GameStateMessage_Create();
+    ECS_UpdateCharacter(&g_World, g_Clients[i].entity, delta,
+                        g_Clients[i].input, g_Clients[i].jump);
+    // Clear one-shot jump
+    g_Clients[i].jump = 0;
+  }
+}
 
-    msg->client_count = server->clientCount;
+// --- Snapshot broadcast -----------------------------------------------------
 
-    memcpy(msg->client_states, server->clients,
-           sizeof(ClientState) * server->clientCount);
+typedef struct {
+  ECSWorld *world;
+  PhysicsStateMessage *msg;
+} SnapshotCtx;
 
-    // Unreliably send the message to all connected clients
-    NBN_GameServer_SendUnreliableMessageTo(client->handle, GAME_STATE_MESSAGE,
-                                           msg);
+static int SnapshotToMessage(Entity e, ECSWorld *world, void *userdata)
+{
+  SnapshotCtx *ctx = (SnapshotCtx *)userdata;
 
-    TraceLog(LOG_DEBUG, "Sent game state to client %d (%d, %d)", client->handle, server->clientCount, i);
+  PhysicsEntityState *s = &ctx->msg->entities[ctx->msg->entityCount++];
+  s->netId     = ECS_GetNetId(world, e);
+  s->meshIndex = world->meshComponents[e].meshIndex;
+  s->transform = world->transforms[e].matrix;
+
+  // Mark character entities for the client
+  if (world->masks[e] & COMPONENT_CHARACTER) {
+    s->shapeType = PST_CYLINDER;
+    s->bodyType  = PBT_DYNAMIC;
+    s->shapeParams.cyl.radius     = 0.4f;
+    s->shapeParams.cyl.halfLength = 0.8f;
+  } else {
+    PhysicsComponent *pc = &world->physComponents[e];
+    s->shapeType   = pc->shape.type;
+    s->bodyType    = pc->body.type;
+    s->shapeParams = pc->shape.params;
   }
 
   return 0;
 }
 
+static void BroadcastPhysicsState(void)
+{
+  for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+    if (g_Clients[i].handle == EMPTY_SLOT) continue;
+
+    PhysicsStateMessage *msg = PhysicsStateMessage_Create();
+    msg->entityCount = 0;
+
+    SnapshotCtx ctx = {.world = &g_World, .msg = msg};
+    ECS_ForEach(&g_World, COMPONENT_TRANSFORM | COMPONENT_MESH, SnapshotToMessage, &ctx);
+
+    NBN_GameServer_SendUnreliableMessageTo(g_Clients[i].handle, PHYSICS_STATE_MESSAGE, msg);
+  }
+}
+
+// --- Main loop --------------------------------------------------------------
+
 static bool running = true;
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
   if (ReadCommandLine(argc, argv)) {
-    printf(
-        "Usage: growth-server [--packet_loss=<value>] [--packet_duplication=<value>] [--ping=<value>] \
-                [--jitter=<value>]\n");
-
+    printf("Usage: growth-server [--packet_loss=<value>] ...\n");
     return 1;
   }
 
+  srand((unsigned int)time(NULL));
   SetTraceLogLevel(LOG_DEBUG);
 
   NBN_UDP_Register();
@@ -210,13 +229,13 @@ int main(int argc, char* argv[])
   }
 
   NBN_GameServer_RegisterMessage(
-      UPDATE_STATE_MESSAGE, (NBN_MessageBuilder)UpdateStateMessage_Create,
-      (NBN_MessageDestructor)UpdateStateMessage_Destroy,
-      (NBN_MessageSerializer)UpdateStateMessage_Serialize);
+      UPDATE_STATE_MESSAGE, (NBN_MessageBuilder)PlayerInputMessage_Create,
+      (NBN_MessageDestructor)PlayerInputMessage_Destroy,
+      (NBN_MessageSerializer)PlayerInputMessage_Serialize);
   NBN_GameServer_RegisterMessage(
-      GAME_STATE_MESSAGE, (NBN_MessageBuilder)GameStateMessage_Create,
-      (NBN_MessageDestructor)GameStateMessage_Destroy,
-      (NBN_MessageSerializer)GameStateMessage_Serialize);
+      PHYSICS_STATE_MESSAGE, (NBN_MessageBuilder)PhysicsStateMessage_Create,
+      (NBN_MessageDestructor)PhysicsStateMessage_Destroy,
+      (NBN_MessageSerializer)PhysicsStateMessage_Serialize);
 
   NBN_GameServer_SetPing(GetOptions().ping);
   NBN_GameServer_SetJitter(GetOptions().jitter);
@@ -225,56 +244,55 @@ int main(int argc, char* argv[])
 
   const float delta = 1.f / TICK_RATE;
 
-  Server server = Server_Create();
+  ECS_Init(&g_World);
+
+  {
+    Entity floorEntity = ECS_CreateEntity(&g_World);
+
+    PhysicsBody body = {0};
+    body.type = PBT_STATIC;
+
+    PhysicsShape shape = {0};
+    shape.params.extents = (Vector3){FLOOR_HALF_EXTENT, 0.5f, FLOOR_HALF_EXTENT};
+    body.transform = MatrixTranslate(0.0f, -0.5f, 0.0f);
+
+    ECS_AddPhysics(&g_World, floorEntity, body, shape);
+  }
+
+  for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+    g_Clients[i].handle = EMPTY_SLOT;
+  }
 
   while (running) {
+
     int ev;
-
-    // Poll for server events
     while ((ev = NBN_GameServer_Poll()) != NBN_NO_EVENT) {
-      if (ev < 0) {
-        TraceLog(LOG_ERROR, "An occured while polling network events. Exit");
 
+      if (ev < 0) {
+        running = false;
         break;
       }
 
-      if (HandleGameServerEvent(&server, ev) < 0)
-        break;
+      HandleGameServerEvent(ev);
     }
 
-    // Broadcast latest game state
-    if (BroadcastGameState(&server) < 0) {
-      TraceLog(LOG_ERROR, "An occured while broadcasting game states. Exit");
+    ApplyAllCharacterInputs(delta);
 
-      break;
-    }
-
-    // Pack all enqueued messages as packets and send them
-    if (NBN_GameServer_SendPackets() < 0) {
-      TraceLog(LOG_ERROR, "An occured while flushing the send queue. Exit");
-
-      break;
-    }
-
-    NBN_GameServerStats stats = NBN_GameServer_GetStats();
-
-    TraceLog(LOG_TRACE, "Upload: %f Bps | Download: %f Bps",
-             stats.upload_bandwidth, stats.download_bandwidth);
+    ECS_Update(&g_World, delta);
+    BroadcastPhysicsState();
+    NBN_GameServer_SendPackets();
 
 #if defined(_WIN32) || defined(_WIN64)
-    Sleep(delta * 1000);
+    Sleep((DWORD)(delta * 1000));
 #else
-    long nanos = delta * 1e9;
-
-    struct timespec t = {.tv_sec = nanos / 999999999,
-                         .tv_nsec = nanos % 999999999};
-
-    nanosleep(&t, &t);
+    {
+      long nanos = (long)(delta * 1e9);
+      struct timespec t = {.tv_sec = nanos / 999999999, .tv_nsec = nanos % 999999999};
+      nanosleep(&t, &t);
+    }
 #endif
   }
 
-  // Stop the server
   NBN_GameServer_Stop();
-
   return 0;
 }

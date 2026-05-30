@@ -3,7 +3,7 @@
 #include <limits.h>
 #include <getopt.h>
 
-#define NBNET_IMPL 
+#define NBNET_IMPL
 
 #include "message.h"
 
@@ -33,55 +33,84 @@ int SpawnClientMessage_Serialize(SpawnClientMessage *msg, NBN_Stream *stream)
   NBN_SerializeFloat(stream, msg->sX, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
   NBN_SerializeFloat(stream, msg->sY, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
   NBN_SerializeFloat(stream, msg->sZ, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+  NBN_SerializeUInt(stream, msg->netId, 0, UINT32_MAX);
   NBN_SerializeUInt(stream, msg->handle, 0, UINT_MAX);
   return 0;
 }
 
-UpdateStateMessage *UpdateStateMessage_Create(void)
+PlayerInputMessage *PlayerInputMessage_Create(void)
 {
-  return malloc(sizeof(UpdateStateMessage));
+  return malloc(sizeof(PlayerInputMessage));
 }
 
-void UpdateStateMessage_Destroy(UpdateStateMessage *msg)
+void PlayerInputMessage_Destroy(PlayerInputMessage *msg)
 {
   free(msg);
 }
 
-int UpdateStateMessage_Serialize(UpdateStateMessage *msg, NBN_Stream *stream)
+int PlayerInputMessage_Serialize(PlayerInputMessage *msg, NBN_Stream *stream)
 {
   NBN_SerializeFloat(stream, msg->x, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
   NBN_SerializeFloat(stream, msg->y, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
   NBN_SerializeFloat(stream, msg->z, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
-  NBN_SerializeFloat(stream, msg->val, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+  NBN_SerializeBool (stream, msg->jump);
   return 0;
 }
 
-GameStateMessage *GameStateMessage_Create(void)
+PhysicsStateMessage *PhysicsStateMessage_Create(void)
 {
-  return malloc(sizeof(GameStateMessage));
+  return malloc(sizeof(PhysicsStateMessage));
 }
 
-void GameStateMessage_Destroy(GameStateMessage *msg)
+void PhysicsStateMessage_Destroy(PhysicsStateMessage *msg)
 {
-    free(msg);
+  free(msg);
 }
 
-int GameStateMessage_Serialize(GameStateMessage* msg, NBN_Stream* stream)
+static void SerializeMatrix(NBN_Stream *stream, Matrix *m)
 {
-  NBN_SerializeUInt(stream, msg->client_count, 0, MAX_CLIENTS);
+  for (int i = 0; i < 16; i++) {
+    NBN_SerializeFloat(stream, ((float *)m)[i], MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+  }
+}
 
-  for (unsigned int i = 0; i < msg->client_count; i++) {
-    NBN_SerializeUInt(stream, msg->client_states[i].handle, 0, UINT_MAX);
+int PhysicsStateMessage_Serialize(PhysicsStateMessage *msg, NBN_Stream *stream)
+{
+  NBN_SerializeUInt(stream, msg->entityCount, 0, MAX_ENTITIES);
 
-    NBN_SerializeFloat(stream, msg->client_states[i].x, MIN_FLOAT_VAL,
-                       MAX_FLOAT_VAL, 3);
-    NBN_SerializeFloat(stream, msg->client_states[i].y, MIN_FLOAT_VAL,
-                       MAX_FLOAT_VAL, 3);
-    NBN_SerializeFloat(stream, msg->client_states[i].z, MIN_FLOAT_VAL,
-                       MAX_FLOAT_VAL, 3);
+  for (uint32_t i = 0; i < msg->entityCount; i++) {
+    PhysicsEntityState *s = &msg->entities[i];
 
-    NBN_SerializeFloat(stream, msg->client_states[i].val, MIN_FLOAT_VAL,
-                       MAX_FLOAT_VAL, 3);
+    NBN_SerializeUInt(stream, s->netId, 0, UINT_MAX);
+    {
+      int bodyType = (int)s->bodyType;
+      NBN_SerializeInt(stream, bodyType, 0, PBT_DYNAMIC);
+      s->bodyType = (PhysicsBodyType)bodyType;
+    }
+    {
+      int shapeType = (int)s->shapeType;
+      NBN_SerializeInt(stream, shapeType, 0, PST_CYLINDER);
+      s->shapeType = (PhysicsShapeType)shapeType;
+    }
+
+    switch (s->shapeType) {
+      case PST_BOX:
+        NBN_SerializeFloat(stream, s->shapeParams.extents.x, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        NBN_SerializeFloat(stream, s->shapeParams.extents.y, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        NBN_SerializeFloat(stream, s->shapeParams.extents.z, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        break;
+      case PST_SPHERE:
+        NBN_SerializeFloat(stream, s->shapeParams.radius, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        break;
+      case PST_CYLINDER:
+        NBN_SerializeFloat(stream, s->shapeParams.cyl.radius, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        NBN_SerializeFloat(stream, s->shapeParams.cyl.halfLength, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        break;
+    }
+
+    NBN_SerializeUInt(stream, s->meshIndex, 0, UINT_MAX);
+
+    SerializeMatrix(stream, &s->transform);
   }
 
   return 0;
@@ -92,12 +121,12 @@ int ReadCommandLine(int argc, char *argv[])
 {
   int opt;
   int option_index;
+
   struct option long_options[] = {
-      {"packet_loss", required_argument, NULL, CL_OPT_PACKET_LOSS},
-      {"packet_duplication", required_argument, NULL,
-       CL_OPT_PACKET_DUPLICATION},
-      {"ping", required_argument, NULL, CL_OPT_PING},
-      {"jitter", required_argument, NULL, CL_OPT_JITTER},
+      {"packet_loss",        required_argument, NULL, CL_OPT_PACKET_LOSS},
+      {"packet_duplication", required_argument, NULL, CL_OPT_PACKET_DUPLICATION},
+      {"ping",               required_argument, NULL, CL_OPT_PING},
+      {"jitter",             required_argument, NULL, CL_OPT_JITTER},
   };
 
   while ((opt = getopt_long(argc, argv, "", long_options, &option_index)) != -1) {

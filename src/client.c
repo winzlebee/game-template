@@ -1,190 +1,289 @@
+#include "ecs.h"
 #include "message.h"
+#include "mesh_manifest.h"
+#include "orbit_camera.h"
 
 #include "raylib.h"
+#include "raymath.h"
 #include "rlgl.h"
 
-#include "joltc.h"
-#include "physics.h"
-
 #include <stdio.h>
+#include <string.h>
+#include <math.h>
 
-#define GAME_WIDTH 1280
+#define GAME_WIDTH  1280
 #define GAME_HEIGHT 800
 
 typedef struct {
-  // Current state of the client
-  ClientState state;
+  Matrix   matrix;
+  Matrix   prevMatrix;
+  uint32_t meshIndex;
+  bool     alive;
+} RenderSlot;
 
-  // State of all the other connected clients
-  ClientState otherClientStates[MAX_CLIENTS - 1];
-  uint32_t    otherClientCount;
+static RenderSlot g_Render[MAX_ENTITIES];
+static Model      g_Meshes[MESH_COUNT];
+static bool       g_MeshesLoaded;
 
-  // Is the client connected to the server
-  bool connected;
+static bool LoadMeshes(void)
+{
+  for (uint32_t i = 0; i < MESH_COUNT; i++) {
+    g_Meshes[i] = LoadModel(g_MeshFileNames[i]);
+    if (g_Meshes[i].meshCount == 0) {
+      TraceLog(LOG_WARNING, "Failed to load: %s", g_MeshFileNames[i]);
+      g_Meshes[i] = LoadModelFromMesh(GenMeshCube(0.5f, 0.5f, 0.5f));
+    }
+  }
+  return true;
+}
 
-  // Has the client been disconnected from the server
-  bool disconnected;
+static void UnloadMeshes(void)
+{
+  for (uint32_t i = 0; i < MESH_COUNT; i++) {
+    UnloadModel(g_Meshes[i]);
+  }
+}
 
-  // Has the client spawned on the server yet
-  bool spawned;
+static void RenderSlotsClear(void)
+{
+  memset(g_Render, 0, sizeof(g_Render));
+}
 
-  // Code the server closed with
-  int serverCode;
-
+typedef struct {
+  uint32_t netId;
+  bool     connected;
+  bool     disconnected;
 } Client;
 
+static Client g_Client;
+static double g_LastTime;
 
-Client Client_Create(void)
+static Vector3 GetPlayerPosition(void)
 {
-  Client c;
-
-  for (uint32_t i = 0; i < MAX_CLIENTS - 1; ++i) {
-    c.otherClientStates[i].handle = EMPTY_SLOT;
+  if (!g_Client.connected) {
+    return Vector3Zero();
   }
 
-  c.connected = false;
-  c.disconnected = false;
-  c.spawned = false;
-  c.serverCode = -1;
+  RenderSlot *slot = &g_Render[g_Client.netId];
 
-  return c;
+  if (!slot->alive) {
+    return Vector3Zero();
+  }
+
+  const Vector3 previous = (Vector3){slot->prevMatrix.m12, slot->prevMatrix.m13, slot->prevMatrix.m14};
+  const Vector3 current  = (Vector3){slot->matrix.m12, slot->matrix.m13, slot->matrix.m14};
+  const float elapsed    = (float) (GetTime() - g_LastTime);
+  const float singleTick = 1.0f / (float) TICK_RATE;
+
+  return Vector3Lerp(previous, current, Clamp(elapsed / singleTick, 0.0f, 1.0f));
+}
+
+static void HandleConnectionAccepted(void)
+{
+  uint8_t data[NBN_SERVER_DATA_MAX_SIZE];
+  unsigned int len = NBN_GameClient_ReadServerData(data);
+
+  RenderSlotsClear();
+
+  NBN_ReadStream stream;
+  NBN_ReadStream_Init(&stream, data, len);
+
+  SpawnClientMessage spawn;
+  SpawnClientMessage_Serialize(&spawn, (NBN_Stream *)&stream);
+
+  g_Client.netId     = spawn.netId;
+  g_Client.connected = true;
+
+  TraceLog(LOG_INFO, "Connected (netId=%u)", g_Client.netId);
+}
+
+static void HandleDisconnection(void)
+{
+  g_Client.connected    = false;
+  g_Client.disconnected = true;
+}
+
+static void HandlePhysicsState(PhysicsStateMessage *msg)
+{
+  for (uint32_t i = 0; i < msg->entityCount; i++) {
+    PhysicsEntityState *state = &msg->entities[i];
+    RenderSlot *slot = &g_Render[state->netId];
+
+    slot->prevMatrix = slot->matrix;
+    slot->matrix     = state->transform;
+    slot->meshIndex  = state->meshIndex;
+    slot->alive      = true;
+  }
+
+  g_LastTime = GetTime();
+
+  PhysicsStateMessage_Destroy(msg);
+}
+
+static void HandleClientEvent(int event)
+{
+  switch (event) {
+    case NBN_NEW_CONNECTION:
+      HandleConnectionAccepted();
+      break;
+    case NBN_CLIENT_DISCONNECTED:
+      HandleDisconnection();
+      break;
+    case NBN_CLIENT_MESSAGE_RECEIVED: {
+      NBN_MessageInfo info = NBN_GameClient_GetMessageInfo();
+
+      if (info.type == PHYSICS_STATE_MESSAGE) {
+        HandlePhysicsState(info.data);
+      }
+
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+static Matrix MatrixLerp(Matrix matA, Matrix matB, float tParam)
+{
+  Vector3 translationA, scaleA;
+  Vector3 translationB, scaleB;
+
+  Quaternion rotationA;
+  Quaternion rotationB;
+
+  MatrixDecompose(matA, &translationA, &rotationA, &scaleA);
+  MatrixDecompose(matB, &translationB, &rotationB, &scaleB);
+
+  Vector3 translation = Vector3Lerp(translationA, translationB, tParam);
+  Quaternion rotation = QuaternionNlerp(rotationA, rotationB, tParam);
+  Vector3 scale       = Vector3Lerp(scaleA, scaleB, tParam);
+
+  return MatrixCompose(translation, rotation, scale);
+}
+
+static void DrawEntity(uint32_t netId, RenderSlot *slot, float alpha)
+{
+  const Matrix interp = MatrixLerp(slot->prevMatrix, slot->matrix, alpha);
+
+  rlPushMatrix();
+  rlLoadIdentity();
+  rlMultMatrixf(MatrixToFloat(interp));
+  DrawModel(g_Meshes[slot->meshIndex], Vector3Zero(), 1.0f, WHITE);
+  rlPopMatrix();
+}
+
+static float InterpolationAlpha(void)
+{
+  double now        = GetTime();
+  float  serverTick = 1.0f / (float)TICK_RATE;
+  double elapsed    = now - g_LastTime;
+  return fminf((float)(elapsed / serverTick), 1.0f);
+}
+
+static void RenderAll(void)
+{
+  float alpha = InterpolationAlpha();
+
+  for (uint32_t i = 0; i < MAX_ENTITIES; i++) {
+    if (!g_Render[i].alive) {
+      continue;
+    }
+
+    DrawEntity(i, &g_Render[i], alpha);
+  }
 }
 
 int main(int argc, char *argv[])
 {
   if (ReadCommandLine(argc, argv)) {
-    printf(
-        "Usage: growth-client [--packet_loss=<value>] [--packet_duplication=<value>] [--ping=<value>] \
-                [--jitter=<value>]\n");
-
+    printf("Usage: growth-client [--packet_loss=...] ...\n");
     return 1;
   }
 
+  SetConfigFlags(FLAG_WINDOW_RESIZABLE);
   InitWindow(GAME_WIDTH, GAME_HEIGHT, "growth by Win Holzapfel");
+  DisableCursor();
+  SetTargetFPS(120);
 
   NBN_UDP_Register();
+  g_MeshesLoaded = LoadMeshes();
 
-  if (NBN_GameClient_StartEx(GROWTH_PROTOCOL_NAME, "127.0.0.1",
-                             GROWTH_PORT, NULL, 0) < 0) {
+  if (NBN_GameClient_StartEx(GROWTH_PROTOCOL_NAME, "127.0.0.1", GROWTH_PORT, NULL, 0) < 0) {
     TraceLog(LOG_ERROR, "Game client failed to start. Exit");
     return 1;
   }
 
-  NBN_GameClient_RegisterMessage(
-      UPDATE_STATE_MESSAGE,
-      (NBN_MessageBuilder)UpdateStateMessage_Create,
-      (NBN_MessageDestructor)UpdateStateMessage_Destroy,
-      (NBN_MessageSerializer)UpdateStateMessage_Serialize);
+  NBN_GameClient_RegisterMessage(UPDATE_STATE_MESSAGE,
+      (NBN_MessageBuilder)PlayerInputMessage_Create,
+      (NBN_MessageDestructor)PlayerInputMessage_Destroy,
+      (NBN_MessageSerializer)PlayerInputMessage_Serialize);
 
-  NBN_GameClient_RegisterMessage(
-      GAME_STATE_MESSAGE,
-      (NBN_MessageBuilder)GameStateMessage_Create,
-      (NBN_MessageDestructor)GameStateMessage_Destroy,
-      (NBN_MessageSerializer)GameStateMessage_Serialize);
+  NBN_GameClient_RegisterMessage(PHYSICS_STATE_MESSAGE,
+      (NBN_MessageBuilder)PhysicsStateMessage_Create,
+      (NBN_MessageDestructor)PhysicsStateMessage_Destroy,
+      (NBN_MessageSerializer)PhysicsStateMessage_Serialize);
 
   NBN_GameClient_SetPing(GetOptions().ping);
   NBN_GameClient_SetJitter(GetOptions().jitter);
   NBN_GameClient_SetPacketLoss(GetOptions().packet_loss);
-  NBN_GameClient_SetPacketDuplication(GetOptions().packet_duplication); 
+  NBN_GameClient_SetPacketDuplication(GetOptions().packet_duplication);
 
-  PhysicsWorld physics;
-  PhysicsWorldCreate(&physics);
+  RenderSlotsClear();
+  memset(&g_Client, 0, sizeof(g_Client));
 
-  PhysicsBody floor;
-  floor.params.extents = (Vector3){10.0f, 0.10f, 10.0f};
-  floor.type = PST_BOX;
-  floor.transform = MatrixIdentity();
+  OrbitCamera oc;
+  OrbitCamera_Init(&oc);
+  Camera3D camera;
 
-  PhysicsBody cube;
-  cube.params.extents = (Vector3){2.0f, 2.0f, 2.0f};
-  cube.type = PST_BOX;
-  cube.transform = MatrixTranslate(0.0f, 5.0f, 0.0f);
-
-  PhysicsBody sphere;
-  sphere.params.radius = 1.0;
-  sphere.type = PST_SPHERE;
-  sphere.transform = MatrixTranslate(0.0f, 8.0f, 1.0f);  
-
-  PhysicsBodyID floorId   = PhysicsWorldAddBody(&physics, &floor, PBT_STATIC);
-  PhysicsBodyID cubeId    = PhysicsWorldAddBody(&physics, &cube, PBT_DYNAMIC);
-  PhysicsBodyID sphereId  = PhysicsWorldAddBody(&physics, &sphere, PBT_DYNAMIC);
-
-  Camera camera = {0};
-  camera.position = (Vector3){10.0f, 10.0f, 10.0f};
-  camera.target = (Vector3){0.0f, 0.0f, 0.0f};
-  camera.up = (Vector3){0.0f, 1.0f, 0.0f};
-  camera.fovy = 45.0f;
-  camera.projection = CAMERA_PERSPECTIVE;
-
-  Ray ray = {0};
-  RayCollision collision = {0};
-
-  SetTargetFPS(60);
+  g_LastTime = GetTime();
 
   while (!WindowShouldClose()) {
+    int ev;
 
-    const float delta = GetFrameTime();
-    PhysicsWorldUpdate(&physics, delta);
-
-    if (IsCursorHidden()) {
-      UpdateCamera(&camera, CAMERA_FIRST_PERSON);
+    while ((ev = NBN_GameClient_Poll()) != NBN_NO_EVENT) {
+      HandleClientEvent(ev);
     }
 
-    if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-      if (IsCursorHidden()) {
-        EnableCursor();
-      } else {
-        DisableCursor();
-      }
+    if (g_Client.connected) {
+      Vector3 input = OrbitCamera_GetInput(&camera, &g_Render[g_Client.netId].matrix);
+
+      PlayerInputMessage *umsg = PlayerInputMessage_Create();
+      umsg->x    = input.x;
+      umsg->y    = input.y;
+      umsg->z    = input.z;
+      umsg->jump = IsKeyDown(KEY_SPACE);
+
+      NBN_GameClient_SendUnreliableMessage(UPDATE_STATE_MESSAGE, umsg);
     }
+
+    NBN_GameClient_SendPackets();
+
+    Vector3 playerPos = GetPlayerPosition();
+    OrbitCamera_Update(&oc, playerPos);
+    OrbitCamera_ToCamera3D(&oc, playerPos, &camera);
 
     BeginDrawing();
-
     ClearBackground(RAYWHITE);
-
     BeginMode3D(camera);
 
-    rlPushMatrix();
-      PhysicsWorldUpdateBody(&physics, cubeId, &cube);
-
-      rlLoadIdentity();
-      rlMultMatrixf(&cube.transform.m0);
-
-      DrawCubeV(Vector3Zero(), cube.params.extents, GRAY);
-    rlPopMatrix();
-
-    rlPushMatrix();
-      PhysicsWorldUpdateBody(&physics, sphereId, &sphere);
-
-      rlLoadIdentity();
-      rlMultMatrixf(&sphere.transform.m0);
-
-      DrawSphere(Vector3Zero(), sphere.params.radius, GREEN);
-    rlPopMatrix();
-
-    DrawRay(ray, MAROON);
+    RenderAll();
     DrawGrid(10, 1.0f);
 
     EndMode3D();
 
-    DrawText("Try clicking on the box with your mouse!", 240, 10, 20, DARKGRAY);
-
-    if (collision.hit) {
-      DrawText("BOX SELECTED",
-               (GAME_WIDTH - MeasureText("BOX SELECTED", 30)) / 2,
-               (int)(GAME_HEIGHT * 0.1f), 30, GREEN);
-    }
-
-    DrawText("Right click mouse to toggle camera controls", 10, 430, 10, GRAY);
-
     DrawFPS(10, 10);
+    DrawText("WASD = move | Space = jump | Mouse = orbit | Scroll = zoom",
+             10, 430, 10, GRAY);
+
+    if (g_Client.connected) {
+      DrawText(TextFormat("NetID: %u", g_Client.netId), 10, 50, 16, DARKGRAY);
+    }
 
     EndDrawing();
   }
 
   NBN_GameClient_Stop();
-
+  UnloadMeshes();
   CloseWindow();
-
   return 0;
 }
