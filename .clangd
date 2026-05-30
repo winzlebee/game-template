@@ -1,0 +1,11 @@
+CompileFlags:
+  CompilationDatabase: "build"
+  Add: ["-std=c11", "-Wall", "-Wextra", "-Wno-unused-parameter"]
+
+Index:
+  Background: Build
+
+Diagnostics:
+  ClangTidy:
+    Add: ["bugprone-*", "performance-*", "readability-*", "modernize-*"]
+    Remove: ["modernize-use-trailing-return-type"]
