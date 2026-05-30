@@ -1,5 +1,8 @@
 #pragma once
 
+#include "physics.h"
+#include "ecs.h"
+
 #include <raylib.h>
 #include <stdint.h>
 
@@ -15,7 +18,7 @@
 #define GROWTH_PROTOCOL_NAME "growth-net"
 #define GROWTH_PORT 42042
 
-#define TICK_RATE 60
+#define TICK_RATE 30
 #define MAX_CLIENTS 4
 #define EMPTY_SLOT ((uint32_t) -1)
 #define SERVER_FULL_CODE 42
@@ -30,10 +33,12 @@ enum
 {
   UPDATE_STATE_MESSAGE,
   GAME_STATE_MESSAGE,
+  PHYSICS_STATE_MESSAGE,
 };
 
 typedef struct {
   float sX, sY, sZ;
+  uint32_t netId;
   NBN_ConnectionHandle handle;
 } SpawnClientMessage;
 
@@ -47,13 +52,28 @@ typedef struct {
 
   float x, y, z;
   float val;
-  
+
 } ClientState;
 
 typedef struct {
   unsigned int client_count;
   ClientState client_states[MAX_CLIENTS];
 } GameStateMessage;
+
+// Physics entity state snapshot for network replication
+typedef struct {
+  uint32_t netId;
+  PhysicsShapeType shapeType;
+  PhysicsBodyType bodyType;
+  PhysicsShapeParams shapeParams;
+  uint32_t meshIndex;
+  Matrix transform;
+} PhysicsEntityState;
+
+typedef struct {
+  uint32_t entityCount;
+  PhysicsEntityState entities[MAX_ENTITIES];
+} PhysicsStateMessage;
 
 typedef struct {
   float packet_loss;
@@ -74,6 +94,9 @@ GameStateMessage* GameStateMessage_Create(void);
 void GameStateMessage_Destroy(GameStateMessage*);
 int GameStateMessage_Serialize(GameStateMessage*, NBN_Stream*);
 
+PhysicsStateMessage* PhysicsStateMessage_Create(void);
+void PhysicsStateMessage_Destroy(PhysicsStateMessage*);
+int PhysicsStateMessage_Serialize(PhysicsStateMessage*, NBN_Stream*);
+
 int ReadCommandLine(int, char*[]);
 Options GetOptions(void);
-

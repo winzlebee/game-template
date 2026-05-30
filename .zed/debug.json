@@ -1,0 +1,26 @@
+// Project-local debug tasks
+//
+// For more documentation on how to configure debug tasks,
+// see: https://zed.dev/docs/debugger
+[
+  {
+    "label": "Client",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "program": "$ZED_WORKTREE_ROOT/build/growth-client",
+    "build": {
+      "cwd": "$ZED_WORKTREE_ROOT/build",
+      "command": "make -j $(nproc)",
+    },
+  },
+  {
+    "label": "Server",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "program": "$ZED_WORKTREE_ROOT/build/growth-server",
+    "build": {
+      "cwd": "$ZED_WORKTREE_ROOT/build",
+      "command": "make -j $(nproc)",
+    },
+  },
+]

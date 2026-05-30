@@ -33,6 +33,7 @@ int SpawnClientMessage_Serialize(SpawnClientMessage *msg, NBN_Stream *stream)
   NBN_SerializeFloat(stream, msg->sX, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
   NBN_SerializeFloat(stream, msg->sY, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
   NBN_SerializeFloat(stream, msg->sZ, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+  NBN_SerializeUInt(stream, msg->netId, 0, UINT32_MAX);
   NBN_SerializeUInt(stream, msg->handle, 0, UINT_MAX);
   return 0;
 }
@@ -82,6 +83,65 @@ int GameStateMessage_Serialize(GameStateMessage* msg, NBN_Stream* stream)
 
     NBN_SerializeFloat(stream, msg->client_states[i].val, MIN_FLOAT_VAL,
                        MAX_FLOAT_VAL, 3);
+  }
+
+  return 0;
+}
+
+PhysicsStateMessage *PhysicsStateMessage_Create(void)
+{
+  return malloc(sizeof(PhysicsStateMessage));
+}
+
+void PhysicsStateMessage_Destroy(PhysicsStateMessage *msg)
+{
+  free(msg);
+}
+
+static void SerializeMatrix(NBN_Stream *stream, Matrix *m)
+{
+  for (int i = 0; i < 16; i++) {
+    NBN_SerializeFloat(stream, ((float *)m)[i], MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+  }
+}
+
+int PhysicsStateMessage_Serialize(PhysicsStateMessage *msg, NBN_Stream *stream)
+{
+  NBN_SerializeUInt(stream, msg->entityCount, 0, MAX_ENTITIES);
+
+  for (uint32_t i = 0; i < msg->entityCount; i++) {
+    PhysicsEntityState *s = &msg->entities[i];
+
+    NBN_SerializeUInt(stream, s->netId, 0, UINT_MAX);
+    {
+      int bodyType = (int)s->bodyType;
+      NBN_SerializeInt(stream, bodyType, 0, PBT_DYNAMIC);
+      s->bodyType = (PhysicsBodyType)bodyType;
+    }
+    {
+      int shapeType = (int)s->shapeType;
+      NBN_SerializeInt(stream, shapeType, 0, PST_CYLINDER);
+      s->shapeType = (PhysicsShapeType)shapeType;
+    }
+
+    switch (s->shapeType) {
+      case PST_BOX:
+        NBN_SerializeFloat(stream, s->shapeParams.extents.x, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        NBN_SerializeFloat(stream, s->shapeParams.extents.y, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        NBN_SerializeFloat(stream, s->shapeParams.extents.z, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        break;
+      case PST_SPHERE:
+        NBN_SerializeFloat(stream, s->shapeParams.radius, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        break;
+      case PST_CYLINDER:
+        NBN_SerializeFloat(stream, s->shapeParams.cyl.radius, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        NBN_SerializeFloat(stream, s->shapeParams.cyl.halfLength, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+        break;
+    }
+
+    NBN_SerializeUInt(stream, s->meshIndex, 0, UINT_MAX);
+
+    SerializeMatrix(stream, &s->transform);
   }
 
   return 0;
