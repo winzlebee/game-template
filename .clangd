@@ -7,5 +7,11 @@ Index:
 
 Diagnostics:
   ClangTidy:
-    Add: ["bugprone-*", "performance-*", "readability-*", "modernize-*"]
-    Remove: ["modernize-use-trailing-return-type"]
+    Add:
+      - bugprone-*
+      - performance-*
+      - readability-*
+      - modernize-*
+    Remove:
+      - modernize-use-trailing-return-type
+      - readability-uppercase-literal-suffix
