@@ -46,7 +46,7 @@ typedef struct
   PhysicsShapeType type;
 
   Matrix transform;
-  
+
   Vector3 velocity;
   Vector3 angularVelocity;
 } PhysicsBody;
@@ -54,6 +54,7 @@ typedef struct
 int PhysicsWorldCreate(PhysicsWorld *world);
 
 PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld *world, const PhysicsBody *body, PhysicsBodyType type);
+void          PhysicsWorldDestroyBody(PhysicsWorld *world, PhysicsBodyID bodyId);
 void          PhysicsWorldUpdate(PhysicsWorld *world, float delta);
 void          PhysicsWorldUpdateBody(PhysicsWorld *world, PhysicsBodyID bodyId, PhysicsBody *body);
 void          PhysicsWorldSetBodyVelocity(PhysicsWorld *world, PhysicsBodyID bodyId, Vector3 velocity);

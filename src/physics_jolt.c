@@ -128,6 +128,11 @@ PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld* world, const PhysicsBody* body,
   return id;
 }
 
+void PhysicsWorldDestroyBody(PhysicsWorld *world, PhysicsBodyID bodyId)
+{
+  JPH_BodyInterface_RemoveAndDestroyBody(world->impl->bodyInterface, bodyId);
+}
+
 void PhysicsWorldUpdate(PhysicsWorld *world, float delta)
 {
   // If you take larger steps than 1 / 60th of a second you need to do multiple
