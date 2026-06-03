@@ -3,7 +3,7 @@
 #include <limits.h>
 #include <getopt.h>
 
-#define NBNET_IMPL 
+#define NBNET_IMPL
 
 #include "message.h"
 
@@ -38,53 +38,22 @@ int SpawnClientMessage_Serialize(SpawnClientMessage *msg, NBN_Stream *stream)
   return 0;
 }
 
-UpdateStateMessage *UpdateStateMessage_Create(void)
+PlayerInputMessage *PlayerInputMessage_Create(void)
 {
-  return malloc(sizeof(UpdateStateMessage));
+  return malloc(sizeof(PlayerInputMessage));
 }
 
-void UpdateStateMessage_Destroy(UpdateStateMessage *msg)
+void PlayerInputMessage_Destroy(PlayerInputMessage *msg)
 {
   free(msg);
 }
 
-int UpdateStateMessage_Serialize(UpdateStateMessage *msg, NBN_Stream *stream)
+int PlayerInputMessage_Serialize(PlayerInputMessage *msg, NBN_Stream *stream)
 {
   NBN_SerializeFloat(stream, msg->x, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
   NBN_SerializeFloat(stream, msg->y, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
   NBN_SerializeFloat(stream, msg->z, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
-  NBN_SerializeFloat(stream, msg->val, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
-  return 0;
-}
-
-GameStateMessage *GameStateMessage_Create(void)
-{
-  return malloc(sizeof(GameStateMessage));
-}
-
-void GameStateMessage_Destroy(GameStateMessage *msg)
-{
-    free(msg);
-}
-
-int GameStateMessage_Serialize(GameStateMessage* msg, NBN_Stream* stream)
-{
-  NBN_SerializeUInt(stream, msg->client_count, 0, MAX_CLIENTS);
-
-  for (unsigned int i = 0; i < msg->client_count; i++) {
-    NBN_SerializeUInt(stream, msg->client_states[i].handle, 0, UINT_MAX);
-
-    NBN_SerializeFloat(stream, msg->client_states[i].x, MIN_FLOAT_VAL,
-                       MAX_FLOAT_VAL, 3);
-    NBN_SerializeFloat(stream, msg->client_states[i].y, MIN_FLOAT_VAL,
-                       MAX_FLOAT_VAL, 3);
-    NBN_SerializeFloat(stream, msg->client_states[i].z, MIN_FLOAT_VAL,
-                       MAX_FLOAT_VAL, 3);
-
-    NBN_SerializeFloat(stream, msg->client_states[i].val, MIN_FLOAT_VAL,
-                       MAX_FLOAT_VAL, 3);
-  }
-
+  NBN_SerializeBool (stream, msg->jump);
   return 0;
 }
 
@@ -152,12 +121,12 @@ int ReadCommandLine(int argc, char *argv[])
 {
   int opt;
   int option_index;
+
   struct option long_options[] = {
-      {"packet_loss", required_argument, NULL, CL_OPT_PACKET_LOSS},
-      {"packet_duplication", required_argument, NULL,
-       CL_OPT_PACKET_DUPLICATION},
-      {"ping", required_argument, NULL, CL_OPT_PING},
-      {"jitter", required_argument, NULL, CL_OPT_JITTER},
+      {"packet_loss",        required_argument, NULL, CL_OPT_PACKET_LOSS},
+      {"packet_duplication", required_argument, NULL, CL_OPT_PACKET_DUPLICATION},
+      {"ping",               required_argument, NULL, CL_OPT_PING},
+      {"jitter",             required_argument, NULL, CL_OPT_JITTER},
   };
 
   while ((opt = getopt_long(argc, argv, "", long_options, &option_index)) != -1) {

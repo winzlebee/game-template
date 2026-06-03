@@ -19,7 +19,7 @@
 #define GROWTH_PORT 42042
 
 #define TICK_RATE 30
-#define MAX_CLIENTS 4
+#define MAX_CLIENTS 8
 #define EMPTY_SLOT ((uint32_t) -1)
 #define SERVER_FULL_CODE 42
 
@@ -44,23 +44,9 @@ typedef struct {
 
 typedef struct {
   float x, y, z;
-  float val;
-} UpdateStateMessage;
+  bool jump;
+} PlayerInputMessage;
 
-typedef struct {
-  uint32_t handle;
-
-  float x, y, z;
-  float val;
-
-} ClientState;
-
-typedef struct {
-  unsigned int client_count;
-  ClientState client_states[MAX_CLIENTS];
-} GameStateMessage;
-
-// Physics entity state snapshot for network replication
 typedef struct {
   uint32_t netId;
   PhysicsShapeType shapeType;
@@ -86,13 +72,9 @@ SpawnClientMessage* SpawnClientMessage_Create(void);
 void SpawnClientMessage_Destroy(SpawnClientMessage*);
 int SpawnClientMessage_Serialize(SpawnClientMessage*, NBN_Stream*);
 
-UpdateStateMessage* UpdateStateMessage_Create(void);
-void UpdateStateMessage_Destroy(UpdateStateMessage*);
-int UpdateStateMessage_Serialize(UpdateStateMessage*, NBN_Stream*);
-
-GameStateMessage* GameStateMessage_Create(void);
-void GameStateMessage_Destroy(GameStateMessage*);
-int GameStateMessage_Serialize(GameStateMessage*, NBN_Stream*);
+PlayerInputMessage* PlayerInputMessage_Create(void);
+void PlayerInputMessage_Destroy(PlayerInputMessage*);
+int PlayerInputMessage_Serialize(PlayerInputMessage*, NBN_Stream*);
 
 PhysicsStateMessage* PhysicsStateMessage_Create(void);
 void PhysicsStateMessage_Destroy(PhysicsStateMessage*);
