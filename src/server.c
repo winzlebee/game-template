@@ -111,20 +111,23 @@ static void HandleClientDisconnection(void)
   }
 }
 
-// Buffer client input — do NOT step the character here. We apply all
-// buffered inputs at a fixed rate in the main loop.
 static void HandleReceivedMessage(void)
 {
   NBN_MessageInfo info = NBN_GameServer_GetMessageInfo();
   ClientSlot *slot = FindSlotByHandle(info.sender);
-  if (!slot) return;
+
+  if (!slot) {
+    // The client sent a message for a slot that doesn't exist.
+    // Either we have a bug, or they're an untrusted client...
+    return;
+  }
 
   switch (info.type) {
     case UPDATE_STATE_MESSAGE: {
-      UpdateStateMessage *msg = info.data;
+      PlayerInputMessage *msg = info.data;
       slot->input = (Vector3){msg->x, 0.0f, msg->z};
-      slot->jump  = (msg->val > 0.5f) ? 1 : 0;
-      UpdateStateMessage_Destroy(msg);
+      slot->jump  = msg->jump;
+      PlayerInputMessage_Destroy(msg);
       break;
     }
   }
@@ -226,9 +229,9 @@ int main(int argc, char *argv[])
   }
 
   NBN_GameServer_RegisterMessage(
-      UPDATE_STATE_MESSAGE, (NBN_MessageBuilder)UpdateStateMessage_Create,
-      (NBN_MessageDestructor)UpdateStateMessage_Destroy,
-      (NBN_MessageSerializer)UpdateStateMessage_Serialize);
+      UPDATE_STATE_MESSAGE, (NBN_MessageBuilder)PlayerInputMessage_Create,
+      (NBN_MessageDestructor)PlayerInputMessage_Destroy,
+      (NBN_MessageSerializer)PlayerInputMessage_Serialize);
   NBN_GameServer_RegisterMessage(
       PHYSICS_STATE_MESSAGE, (NBN_MessageBuilder)PhysicsStateMessage_Create,
       (NBN_MessageDestructor)PhysicsStateMessage_Destroy,
