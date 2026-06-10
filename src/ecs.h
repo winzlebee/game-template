@@ -4,6 +4,7 @@
 #include "raymath.h"
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define MAX_ENTITIES   1024
 #define INVALID_ENTITY UINT16_MAX
@@ -25,14 +26,13 @@ typedef struct {
 typedef struct {
   PhysicsBody   body;
   PhysicsBodyID bodyId;
-  PhysicsBodyType type;
+  PhysicsShape  shape;
 } PhysicsComponent;
 
 typedef struct {
-  PhysicsCharacter handle;
+  PhysicsCharacter character;
   float            speed;
   float            jumpSpeed;
-  Vector3          velocity;
 } CharacterComponent;
 
 typedef struct {
@@ -82,12 +82,12 @@ uint32_t ECS_GetNetId(const ECSWorld *world, Entity entity);
 Entity   ECS_FindByNetId(const ECSWorld *world, uint32_t netId);
 
 void ECS_AddTransform(ECSWorld *world, Entity entity, Matrix transform);
-void ECS_AddPhysics(ECSWorld *world, Entity entity, PhysicsBody body, PhysicsBodyType type);
+void ECS_AddPhysics(ECSWorld *world, Entity entity, PhysicsBody body, PhysicsShape shape);
 void ECS_AddCharacter(ECSWorld *world, Entity entity, Vector3 position, float speed, float jumpSpeed);
 void ECS_AddMesh(ECSWorld *world, Entity entity, uint32_t meshIndex);
 
 void ECS_Update(ECSWorld *world, float delta);
-void ECS_UpdateCharacter(ECSWorld *world, Entity entity, float delta, Vector3 input, int jump);
+void ECS_UpdateCharacter(ECSWorld *world, Entity entity, float delta, Vector3 input, bool jump);
 
 uint32_t ECS_LiveCount(const ECSWorld *world);
 

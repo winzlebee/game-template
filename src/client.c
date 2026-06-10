@@ -143,7 +143,7 @@ static void HandleClientEvent(int event)
   }
 }
 
-static Matrix MatrixLerp(Matrix matA, Matrix matB, float t)
+static Matrix MatrixLerp(Matrix matA, Matrix matB, float tParam)
 {
   Vector3 translationA, scaleA;
   Vector3 translationB, scaleB;
@@ -154,9 +154,9 @@ static Matrix MatrixLerp(Matrix matA, Matrix matB, float t)
   MatrixDecompose(matA, &translationA, &rotationA, &scaleA);
   MatrixDecompose(matB, &translationB, &rotationB, &scaleB);
 
-  Vector3 translation = Vector3Lerp(translationA, translationB, t);
-  Quaternion rotation = QuaternionNlerp(rotationA, rotationB, t);
-  Vector3 scale       = Vector3Lerp(scaleA, scaleB, t);
+  Vector3 translation = Vector3Lerp(translationA, translationB, tParam);
+  Quaternion rotation = QuaternionNlerp(rotationA, rotationB, tParam);
+  Vector3 scale       = Vector3Lerp(scaleA, scaleB, tParam);
 
   return MatrixCompose(translation, rotation, scale);
 }
@@ -214,9 +214,10 @@ int main(int argc, char *argv[])
   }
 
   NBN_GameClient_RegisterMessage(UPDATE_STATE_MESSAGE,
-      (NBN_MessageBuilder)UpdateStateMessage_Create,
-      (NBN_MessageDestructor)UpdateStateMessage_Destroy,
-      (NBN_MessageSerializer)UpdateStateMessage_Serialize);
+      (NBN_MessageBuilder)PlayerInputMessage_Create,
+      (NBN_MessageDestructor)PlayerInputMessage_Destroy,
+      (NBN_MessageSerializer)PlayerInputMessage_Serialize);
+
   NBN_GameClient_RegisterMessage(PHYSICS_STATE_MESSAGE,
       (NBN_MessageBuilder)PhysicsStateMessage_Create,
       (NBN_MessageDestructor)PhysicsStateMessage_Destroy,
@@ -246,11 +247,11 @@ int main(int argc, char *argv[])
     if (g_Client.connected) {
       Vector3 input = OrbitCamera_GetInput(&camera, &g_Render[g_Client.netId].matrix);
 
-      UpdateStateMessage *umsg = UpdateStateMessage_Create();
-      umsg->x   = input.x;
-      umsg->y   = input.y;
-      umsg->z   = input.z;
-      umsg->val = IsKeyDown(KEY_SPACE) ? 1.0f : 0.0f;
+      PlayerInputMessage *umsg = PlayerInputMessage_Create();
+      umsg->x    = input.x;
+      umsg->y    = input.y;
+      umsg->z    = input.z;
+      umsg->jump = IsKeyDown(KEY_SPACE);
 
       NBN_GameClient_SendUnreliableMessage(UPDATE_STATE_MESSAGE, umsg);
     }

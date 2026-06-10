@@ -44,7 +44,7 @@ void ECS_DestroyEntity(ECSWorld *world, Entity entity)
   }
 
   if (world->masks[entity] & COMPONENT_CHARACTER) {
-    PhysicsWorldDestroyCharacter(&world->physWorld, world->charComponents[entity].handle);
+    PhysicsWorldDestroyCharacter(&world->physWorld, world->charComponents[entity].character);
   }
 
   world->masks[entity]  = (world->freeListHead << 16) | COMPONENT_NONE;
@@ -76,14 +76,14 @@ void ECS_AddTransform(ECSWorld *world, Entity entity, Matrix transform)
 }
 
 void ECS_AddPhysics(ECSWorld *world, Entity entity, PhysicsBody body,
-                    PhysicsBodyType type)
+                    PhysicsShape shape)
 {
   assert(!(world->masks[entity] & COMPONENT_CHARACTER) &&
          "Entity already has character component");
 
   world->physComponents[entity].body   = body;
-  world->physComponents[entity].type   = type;
-  world->physComponents[entity].bodyId = PhysicsWorldAddBody(&world->physWorld, &body, type);
+  world->physComponents[entity].shape  = shape;
+  world->physComponents[entity].bodyId = PhysicsWorldAddBody(&world->physWorld, &body, &shape);
 
   world->transforms[entity].matrix = body.transform;
   world->masks[entity] |= (COMPONENT_PHYSICS | COMPONENT_TRANSFORM);
@@ -95,20 +95,15 @@ void ECS_AddCharacter(ECSWorld *world, Entity entity, Vector3 position,
   assert(!(world->masks[entity] & COMPONENT_PHYSICS) &&
          "Entity already has physics component");
 
-  PhysicsCharacterSettings settings;
-  PhysicsCharacterSettings_Init(&settings);
+  PhysicsCharacterSettings settings = PhysicsCharacterDefaultSettings();
 
   settings.halfHeight = 0.8f;
   settings.radius = 0.4f;
   settings.mass = 70.0f;
 
-  world->charComponents[entity].handle    = PhysicsWorldCreateCharacter(&world->physWorld, &settings, position);
+  world->charComponents[entity].character = PhysicsWorldAddCharacter(&world->physWorld, &settings, position);
   world->charComponents[entity].speed     = speed;
   world->charComponents[entity].jumpSpeed = jumpSpeed;
-  world->charComponents[entity].velocity  = (Vector3){0, 0, 0};
-
-  PhysicsWorldGetCharacterTransform(world->charComponents[entity].handle,
-                                    &world->transforms[entity].matrix);
 
   world->masks[entity] |= (COMPONENT_CHARACTER | COMPONENT_TRANSFORM);
 }
@@ -119,18 +114,40 @@ void ECS_AddMesh(ECSWorld *world, Entity entity, uint32_t meshIndex)
   world->masks[entity] |= COMPONENT_MESH;
 }
 
-void ECS_UpdateCharacter(ECSWorld *world, Entity entity, float delta, Vector3 input,
-                         int jump)
+void ECS_UpdateCharacter(ECSWorld *world, Entity entity, float delta,
+                         Vector3 input, bool jump)
 {
   assert((world->masks[entity] & COMPONENT_CHARACTER) &&
          "Entity is not a character");
 
   CharacterComponent *character = &world->charComponents[entity];
+  PhysicsCharacter   *physics   = &character->character;
 
-  PhysicsWorldUpdateCharacter(&world->physWorld, character->handle, delta, input, jump, character->jumpSpeed);
-  PhysicsWorldGetCharacterTransform(character->handle, &world->transforms[entity].matrix);
+  // Get the gravity direction, and the velocity that has already been applied
+  // in that direction, so we can re-apply it after we add the desired movement vector.
+  const Vector3 gravity = PhysicsWorldGetGravity(&world->physWorld);
+  const float   applied = Vector3DotProduct(physics->velocity, gravity);
 
-  character->velocity = PhysicsWorldGetCharacterVelocity(character->handle);
+  // Create a global velocity vector from our global input frame and player speed
+  Vector3 velocity = Vector3Scale(input, character->speed);
+
+  // Cancel out any player movement in the gravity direction
+  velocity = Vector3Subtract(velocity, Vector3Scale(gravity, Vector3DotProduct(gravity, velocity)));
+
+  // Re-introduce the already existing gravity
+  velocity = Vector3Add(velocity, Vector3Scale(gravity, applied));
+
+  if (physics->onGround) {
+    if (jump) {
+      Vector3Add(velocity, Vector3Scale(Vector3Negate(gravity), character->jumpSpeed));
+    }
+  } else {
+    Vector3Add(velocity, Vector3Scale(gravity, delta));
+  }
+
+  // The only parameter we drive is the velocity of the player.
+  // Everything else is calculated for us by the physics engine.
+  physics->velocity = velocity;
 }
 
 void ECS_Update(ECSWorld *world, float delta)
@@ -138,15 +155,18 @@ void ECS_Update(ECSWorld *world, float delta)
   PhysicsWorldUpdate(&world->physWorld, delta);
 
   for (Entity i = 0; i < MAX_ENTITIES; i++) {
-
-    if (!(world->masks[i] & COMPONENT_PHYSICS)) {
-      continue;
+    if (world->masks[i] & COMPONENT_PHYSICS) {
+      assert(world->masks[i] & COMPONENT_TRANSFORM);
+      PhysicsWorldUpdateBody(&world->physWorld, world->physComponents[i].bodyId,
+                             &world->physComponents[i].body);
+      world->transforms[i].matrix = world->physComponents[i].body.transform;
     }
 
-    PhysicsWorldUpdateBody(&world->physWorld, world->physComponents[i].bodyId,
-                           &world->physComponents[i].body);
-
-    world->transforms[i].matrix = world->physComponents[i].body.transform;
+    if (world->masks[i] & COMPONENT_CHARACTER) {
+      assert(world->masks[i] & COMPONENT_TRANSFORM);
+      PhysicsWorldUpdateCharacter(&world->physWorld, &world->charComponents[i].character, delta);
+      world->transforms[i].matrix = world->charComponents[i].character.transform;
+    }
   }
 }
 

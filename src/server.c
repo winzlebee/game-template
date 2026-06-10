@@ -184,9 +184,9 @@ static int SnapshotToMessage(Entity e, ECSWorld *world, void *userdata)
     s->shapeParams.cyl.halfLength = 0.8f;
   } else {
     PhysicsComponent *pc = &world->physComponents[e];
-    s->shapeType   = pc->body.type;
-    s->bodyType    = pc->type;
-    s->shapeParams = pc->body.params;
+    s->shapeType   = pc->shape.type;
+    s->bodyType    = pc->body.type;
+    s->shapeParams = pc->shape.params;
   }
 
   return 0;
@@ -248,12 +248,15 @@ int main(int argc, char *argv[])
 
   {
     Entity floorEntity = ECS_CreateEntity(&g_World);
+
     PhysicsBody body = {0};
-    body.type = PST_BOX;
-    float floorHalfY = 0.5f;
-    body.params.extents = (Vector3){FLOOR_HALF_EXTENT, floorHalfY, FLOOR_HALF_EXTENT};
-    body.transform = MatrixTranslate(0.0f, -floorHalfY, 0.0f);
-    ECS_AddPhysics(&g_World, floorEntity, body, PBT_STATIC);
+    body.type = PBT_STATIC;
+
+    PhysicsShape shape = {0};
+    shape.params.extents = (Vector3){FLOOR_HALF_EXTENT, 0.5f, FLOOR_HALF_EXTENT};
+    body.transform = MatrixTranslate(0.0f, -0.5f, 0.0f);
+
+    ECS_AddPhysics(&g_World, floorEntity, body, shape);
   }
 
   for (uint32_t i = 0; i < MAX_CLIENTS; i++) {

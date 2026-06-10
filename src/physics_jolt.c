@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "raymath.h"
 #include "raylib.h"
 
 typedef struct PhysicsWorldImpl {
@@ -18,16 +19,13 @@ typedef struct PhysicsWorldImpl {
   JPH_PhysicsSystem *system;
   JPH_BodyInterface *bodyInterface;
 
-  // Filters used by CharacterVirtual update
   JPH_BodyFilter  *charBodyFilter;
   JPH_ShapeFilter *charShapeFilter;
 } PhysicsWorldImpl;
 
 typedef struct PhysicsCharacterImpl {
   JPH_CharacterVirtual *handle;
-  JPH_CapsuleShape      *capsule;
-  float                  halfHeight;
-  float                  radius;
+  JPH_Shape *shape;
 } PhysicsCharacterImpl;
 
 // We use a 1-to-1 mapping between object layers and broadphase layers.
@@ -87,22 +85,32 @@ int PhysicsWorldCreate(PhysicsWorld *world)
   return 0;
 }
 
-PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld* world, const PhysicsBody* body,
-                                  PhysicsBodyType type)
+Vector3 PhysicsWorldGetGravity(PhysicsWorld *world)
+{
+  Vector3 gravity;
+  JPH_PhysicsSystem_GetGravity(world->impl->system, (JPH_Vec3 *) &gravity);
+  return gravity;
+}
+
+PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld *world, const PhysicsBody *body,
+                                  const PhysicsShape *pShape)
 {
   JPH_Shape *shape = NULL;
 
-  switch (body->type) {
+  switch (pShape->type) {
     case PST_BOX: {
-      const Vector3 hExtents = Vector3Scale(body->params.extents, 0.5f);
+      const Vector3 hExtents = Vector3Scale(pShape->params.extents, 0.5f);
       shape = (JPH_Shape *) JPH_BoxShape_Create((const JPH_Vec3 *) &hExtents, JPH_DEFAULT_CONVEX_RADIUS);
       break;
     }
     case PST_SPHERE:
-      shape = (JPH_Shape *) JPH_SphereShape_Create(body->params.radius);
+      shape = (JPH_Shape *) JPH_SphereShape_Create(pShape->params.radius);
       break;
     case PST_CYLINDER:
-      shape = (JPH_Shape *) JPH_CylinderShape_Create(body->params.cyl.halfLength, body->params.cyl.radius);
+      shape = (JPH_Shape *) JPH_CylinderShape_Create(pShape->params.cyl.halfLength, pShape->params.cyl.radius);
+      break;
+    case PST_CAPSULE:
+      shape = (JPH_Shape *) JPH_CapsuleShape_Create(pShape->params.cyl.halfLength, pShape->params.cyl.radius);
       break;
   }
 
@@ -112,20 +120,20 @@ PhysicsBodyID PhysicsWorldAddBody(PhysicsWorld* world, const PhysicsBody* body,
 
   MatrixDecompose(body->transform, &position, &rotation, &scale);
 
-  const PhysicsLayer   layer      = (type == PBT_STATIC ? PL_NON_MOVING               : PL_MOVING);
-  const JPH_Activation activate   = (type == PBT_STATIC ? JPH_Activation_DontActivate : JPH_Activation_Activate);
-  const JPH_MotionType motionType = (type == PBT_STATIC ? JPH_MotionType_Static       : JPH_MotionType_Dynamic);
+  const PhysicsLayer   layer      = (body->type == PBT_STATIC ? PL_NON_MOVING               : PL_MOVING);
+  const JPH_Activation activate   = (body->type == PBT_STATIC ? JPH_Activation_DontActivate : JPH_Activation_Activate);
+  const JPH_MotionType motionType = (body->type == PBT_STATIC ? JPH_MotionType_Static       : JPH_MotionType_Dynamic);
 
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
     shape, (const JPH_Vec3 *)&position, (const JPH_Quat *)&rotation, motionType,
     layer);
 
-  const JPH_BodyID id = JPH_BodyInterface_CreateAndAddBody(world->impl->bodyInterface,
-                                                           settings, activate);
+  const PhysicsBodyID bodyId = JPH_BodyInterface_CreateAndAddBody(
+    world->impl->bodyInterface, settings, activate);
 
   JPH_BodyCreationSettings_Destroy(settings);
 
-  return id;
+  return bodyId;
 }
 
 void PhysicsWorldDestroyBody(PhysicsWorld *world, PhysicsBodyID bodyId)
@@ -184,142 +192,81 @@ void PhysicsWorldDestroy(PhysicsWorld *world)
 	JPH_Shutdown();
 }
 
-// ---------------------------------------------------------------------------
-// CharacterVirtual
-// ---------------------------------------------------------------------------
-
-void PhysicsCharacterSettings_Init(PhysicsCharacterSettings *s)
+PhysicsCharacterSettings PhysicsCharacterDefaultSettings()
 {
-  s->halfHeight       = 0.5f;
-  s->radius           = 0.5f;
-  s->mass             = 70.0f;
-  s->maxSlopeAngle    = 0.785f;  // ~45 degrees
-  s->maxStrength      = 100.0f;
-  s->characterPadding    = 0.02f;
-  s->penetrationRecoverySpeed  = 1.0f;
-  s->predictiveContactDistance = 0.1f;
+  PhysicsCharacterSettings character;
+
+  character.halfHeight    = 0.5f;
+  character.radius        = 0.5f;
+  character.mass          = 70.0f;
+  character.maxSlopeAngle = 45.0f * DEG2RAD;
+  character.maxStrength   = 100.0f;
+
+  return character;
 }
 
-PhysicsCharacter PhysicsWorldCreateCharacter(PhysicsWorld *world,
-    const PhysicsCharacterSettings *settings, Vector3 position)
+PhysicsCharacter PhysicsWorldAddCharacter(PhysicsWorld *world, const PhysicsCharacterSettings *settings, Vector3 position)
 {
-  PhysicsCharacterImpl *ch = malloc(sizeof(PhysicsCharacterImpl));
-  memset(ch, 0, sizeof(*ch));
+  JPH_CapsuleShape *capsule = JPH_CapsuleShape_Create(settings->halfHeight, settings->radius);
 
-  ch->halfHeight = settings->halfHeight;
-  ch->radius     = settings->radius;
-
-  // Create the capsule shape (centered at origin — offset done via shapeOffset)
-  ch->capsule = JPH_CapsuleShape_Create(settings->halfHeight, settings->radius);
-
-  // Zero-init settings before Init to avoid uninitialized fields
-  JPH_CharacterVirtualSettings cvSettings;
-  memset(&cvSettings, 0, sizeof(cvSettings));
+  JPH_CharacterVirtualSettings cvSettings = {0};
   JPH_CharacterVirtualSettings_Init(&cvSettings);
 
-  cvSettings.base.up              = (JPH_Vec3){0, 1, 0};
-  cvSettings.base.maxSlopeAngle   = settings->maxSlopeAngle;
-  cvSettings.base.shape           = (const JPH_Shape *)ch->capsule;
-  cvSettings.shapeOffset          = (JPH_Vec3){0, settings->halfHeight + settings->radius, 0};
-  cvSettings.mass                 = settings->mass;
-  cvSettings.maxStrength          = settings->maxStrength;
-  cvSettings.backFaceMode         = JPH_BackFaceMode_IgnoreBackFaces;
-  cvSettings.predictiveContactDistance = settings->predictiveContactDistance;
-  cvSettings.characterPadding     = settings->characterPadding;
-  cvSettings.penetrationRecoverySpeed = settings->penetrationRecoverySpeed;
+  cvSettings.base.up            = (JPH_Vec3){0, 1, 0};
+  cvSettings.base.maxSlopeAngle = settings->maxSlopeAngle;
+  cvSettings.base.shape         = (const JPH_Shape *) capsule;
+  cvSettings.shapeOffset        = (JPH_Vec3){0, settings->halfHeight + settings->radius, 0};
+  cvSettings.mass               = settings->mass;
+  cvSettings.maxStrength        = settings->maxStrength;
+  cvSettings.backFaceMode       = JPH_BackFaceMode_IgnoreBackFaces;
 
-  JPH_RVec3 pos = {position.x, position.y, position.z};
-  JPH_Quat  rot = {0, 0, 0, 1};
+  const JPH_Quat  rot = {0, 0, 0, 1};
+  const JPH_RVec3 pos = *((const JPH_Vec3 *) &position);
 
-  ch->handle = JPH_CharacterVirtual_Create(&cvSettings, &pos, &rot, 0,
-                                           world->impl->system);
+  JPH_CharacterVirtual *handle = JPH_CharacterVirtual_Create(
+    &cvSettings, &pos, &rot, 0, world->impl->system);
 
-  return ch;
+  PhysicsCharacter character;
+
+  character.transform = MatrixTranslate(position.x, position.y, position.z);
+  character.velocity  = Vector3Zero();
+
+  character.impl = malloc(sizeof(PhysicsCharacterImpl));
+  character.id           = JPH_CharacterVirtual_GetID(handle);
+  character.impl->handle = handle;
+  character.impl->shape  = (JPH_Shape *) capsule;
+
+  return character;
 }
 
-void PhysicsWorldDestroyCharacter(PhysicsWorld *world, PhysicsCharacter ch)
+
+void PhysicsWorldUpdateCharacter(PhysicsWorld *world, PhysicsCharacter *character, float delta)
 {
-  JPH_CharacterBase_Destroy((JPH_CharacterBase *)ch->handle);
-  JPH_Shape_Destroy((JPH_Shape *)ch->capsule);
-  free(ch);
-  (void)world;
+  Vector3    position;
+  Quaternion rotation;
+  Vector3    scale;
+
+  MatrixDecompose(character->transform, &position, &rotation, &scale);
+
+  JPH_CharacterVirtual_SetLinearVelocity(character->impl->handle, (const JPH_Vec3 *) &character->velocity);
+  JPH_CharacterVirtual_SetRotation      (character->impl->handle, (const JPH_Quat *) &rotation);
+
+  JPH_ExtendedUpdateSettings extSettings = {0};
+  extSettings.walkStairsStepUp     = (JPH_Vec3){0, 0.3f, 0};
+  extSettings.stickToFloorStepDown = (JPH_Vec3){0, 0, 0};
+
+  JPH_CharacterVirtual_ExtendedUpdate(
+    character->impl->handle, delta, &extSettings, PL_MOVING,
+    world->impl->system, world->impl->charBodyFilter,
+    world->impl->charShapeFilter);
+
+  character->onGround =
+    JPH_CharacterBase_IsSupported((JPH_CharacterBase *)character->impl->handle);
 }
 
-void PhysicsWorldUpdateCharacter(PhysicsWorld *world, PhysicsCharacter ch,
-    float delta, Vector3 inMovementDirection, int inJump, float jumpSpeed)
+void PhysicsWorldDestroyCharacter(PhysicsWorld *world, PhysicsCharacter character)
 {
-  JPH_CharacterVirtual *cv = ch->handle;
-
-  JPH_Vec3 curLinearVel;
-  JPH_CharacterVirtual_GetLinearVelocity(cv, &curLinearVel);
-
-  bool onGround = JPH_CharacterBase_IsSupported((JPH_CharacterBase *)cv);
-
-  // Build new velocity
-  JPH_Vec3 newVel;
-
-  float speed = 5.0f;
-  JPH_Vec3 desiredHoriz = {
-    inMovementDirection.x * speed,
-    0,
-    inMovementDirection.z * speed
-  };
-
-  if (onGround) {
-    // On ground: drive horizontal from input, keep Y from current (usually near 0)
-    newVel.x = desiredHoriz.x;
-    newVel.y = curLinearVel.y;
-    newVel.z = desiredHoriz.z;
-
-    // Jump: add upward impulse
-    if (inJump) {
-      newVel.y += jumpSpeed;
-    }
-  } else {
-    // In air: drive horizontal from input, apply gravity to vertical
-    JPH_Vec3 gravity;
-    JPH_PhysicsSystem_GetGravity(world->impl->system, &gravity);
-
-    newVel.x = desiredHoriz.x;
-    newVel.y = curLinearVel.y + gravity.y * delta;
-    newVel.z = desiredHoriz.z;
-  }
-
-
-  JPH_CharacterVirtual_SetLinearVelocity(cv, &newVel);
-
-  if (Vector3Length(inMovementDirection) >= 0.01f) {
-    Quaternion facingRotation = QuaternionFromVector3ToVector3((Vector3){0, 0, 1}, Vector3Normalize(inMovementDirection));
-    JPH_Quat facing;
-    memcpy(&facing, &facingRotation, sizeof(Quaternion));
-    JPH_CharacterVirtual_SetRotation(cv, &facing);
-  }
-
-  // Update
-  JPH_ExtendedUpdateSettings extSettings;
-  memset(&extSettings, 0, sizeof(extSettings));
-
-  JPH_Vec3 stepUp   = {0, 0.3f, 0};
-  JPH_Vec3 stepDown = {0, 0, 0};
-  extSettings.walkStairsStepUp     = stepUp;
-  extSettings.stickToFloorStepDown = stepDown;
-
-  JPH_CharacterVirtual_ExtendedUpdate(cv, delta, &extSettings,
-      PL_MOVING, world->impl->system,
-      world->impl->charBodyFilter, world->impl->charShapeFilter);
-}
-
-void PhysicsWorldGetCharacterTransform(PhysicsCharacter ch, Matrix *out)
-{
-  JPH_RMat4 worldTransform;
-  JPH_CharacterVirtual_GetWorldTransform(ch->handle, &worldTransform);
-  memcpy(out, &worldTransform, sizeof(Matrix));
-  *out = MatrixTranspose(*out);
-}
-
-Vector3 PhysicsWorldGetCharacterVelocity(PhysicsCharacter ch)
-{
-  JPH_Vec3 vel;
-  JPH_CharacterVirtual_GetLinearVelocity(ch->handle, &vel);
-  return (Vector3){vel.x, vel.y, vel.z};
+  JPH_CharacterBase_Destroy((JPH_CharacterBase *) character.impl->handle);
+  JPH_Shape_Destroy(character.impl->shape);
+  free(character.impl);
 }
