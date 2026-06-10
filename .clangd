@@ -1,6 +1,6 @@
 CompileFlags:
   CompilationDatabase: "build"
-  Add: ["-std=c11", "-Wall", "-Wextra", "-Wno-unused-parameter"]
+  Add: ["-Wall", "-Wextra", "-Wno-unused-parameter"]
 
 Index:
   Background: Build
@@ -16,3 +16,9 @@ Diagnostics:
       - modernize-use-trailing-return-type
       - readability-uppercase-literal-suffix
       - readability-magic-numbers
+
+---
+If:
+  PathMatch: ".*\\.c$"
+CompileFlags:
+  Add: ["-std=c11"]
