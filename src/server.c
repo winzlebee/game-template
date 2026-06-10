@@ -2,6 +2,7 @@
 #include "message.h"
 #include "mesh_manifest.h"
 
+#include <raylib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -16,7 +17,7 @@ typedef struct {
   NBN_ConnectionHandle handle;
   Entity   entity;
   Vector3  input;   // latest movement input from client
-  int      jump;    // latest jump flag
+  bool     jump;    // latest jump flag
 } ClientSlot;
 
 static ClientSlot  g_Clients[MAX_CLIENTS];

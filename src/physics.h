@@ -75,24 +75,6 @@ typedef struct
   float maxStrength;
 } PhysicsCharacterSettings;
 
-typedef struct
-{
-  /**
-   * Character movement vector in global space. Should be normalized.
-   */
-  Vector3 movement;
-
-  /**
-   * Whether the player is jumping
-   */
-  bool jumping;
-
-  /**
-   * The speed with which the player is jumping
-   */
-  float jumpSpeed;
-} PhysicsCharacterInput;
-
 int     PhysicsWorldCreate(PhysicsWorld *world);
 Vector3 PhysicsWorldGetGravity(PhysicsWorld *world);
 

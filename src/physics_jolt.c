@@ -260,6 +260,12 @@ void PhysicsWorldUpdateCharacter(PhysicsWorld *world, PhysicsCharacter *characte
     world->impl->system, world->impl->charBodyFilter,
     world->impl->charShapeFilter);
 
+  JPH_RMat4 worldTransform;
+  JPH_CharacterVirtual_GetWorldTransform(character->impl->handle, &worldTransform);
+  memcpy(&character->transform, &worldTransform, sizeof(Matrix));
+
+  character->transform = MatrixTranspose(character->transform);
+
   character->onGround =
     JPH_CharacterBase_IsSupported((JPH_CharacterBase *)character->impl->handle);
 }
