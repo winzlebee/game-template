@@ -2,6 +2,7 @@
 #include "physics.h"
 
 #include <raylib.h>
+#include <raymath.h>
 #include <string.h>
 #include <assert.h>
 
@@ -129,13 +130,13 @@ void ECS_UpdateCharacter(ECSWorld *world, Entity entity, float delta,
   const float   applied = Vector3DotProduct(physics->velocity, gravity);
 
   // Create a global velocity vector from our global input frame and player speed
-  Vector3 velocity = Vector3Scale(input, character->speed);
+  const Vector3 inMovement = Vector3Scale(input, character->speed);
 
   // Cancel out any player movement in the gravity direction
-  velocity = Vector3Subtract(velocity, Vector3Scale(gravity, Vector3DotProduct(gravity, velocity)));
+  const Vector3 movement = Vector3Subtract(inMovement, Vector3Scale(gravity, Vector3DotProduct(gravity, inMovement)));
 
   // Re-introduce the already existing gravity
-  velocity = Vector3Add(velocity, Vector3Scale(gravity, applied));
+  const Vector3 velocity = Vector3Add(movement, Vector3Scale(gravity, applied));
 
   if (physics->onGround) {
     if (jump) {
@@ -143,6 +144,18 @@ void ECS_UpdateCharacter(ECSWorld *world, Entity entity, float delta,
     }
   } else {
     Vector3Add(velocity, Vector3Scale(gravity, delta));
+  }
+
+  if (Vector3Length(movement) >= 0.01f) {
+    Vector3 translation;
+    Quaternion rotation;
+    Vector3 scale;
+
+    MatrixDecompose(physics->transform, &translation, &rotation, &scale);
+
+    const Quaternion facing = QuaternionFromVector3ToVector3((Vector3){0, 0, 1}, Vector3Normalize(movement));
+
+    physics->transform = MatrixCompose(translation, facing, scale);
   }
 
   // The only parameter we drive is the velocity of the player.
