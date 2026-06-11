@@ -1,6 +1,7 @@
 #include "ecs.h"
 #include "physics.h"
 
+#include <math.h>
 #include <raylib.h>
 #include <raymath.h>
 #include <string.h>
@@ -126,24 +127,29 @@ void ECS_UpdateCharacter(ECSWorld *world, Entity entity, float delta,
 
   // Get the gravity direction, and the velocity that has already been applied
   // in that direction, so we can re-apply it after we add the desired movement vector.
-  const Vector3 gravity = PhysicsWorldGetGravity(&world->physWorld);
-  const float   applied = Vector3DotProduct(physics->velocity, gravity);
+  const Vector3 gravity    = PhysicsWorldGetGravity(&world->physWorld);
+  const Vector3 gravityDir = Vector3Normalize(gravity);
+  const float   applied    = Vector3DotProduct(physics->velocity, gravityDir);
 
   // Create a global velocity vector from our global input frame and player speed
   const Vector3 inMovement = Vector3Scale(input, character->speed);
 
   // Cancel out any player movement in the gravity direction
-  const Vector3 movement = Vector3Subtract(inMovement, Vector3Scale(gravity, Vector3DotProduct(gravity, inMovement)));
+  const Vector3 movement = Vector3Subtract(inMovement, Vector3Scale(gravityDir, Vector3DotProduct(inMovement, gravityDir)));
 
-  // Re-introduce the already existing gravity
-  const Vector3 velocity = Vector3Add(movement, Vector3Scale(gravity, applied));
+  // Construct final character velocity
+  Vector3 velocity = movement;
 
   if (physics->onGround) {
     if (jump) {
-      Vector3Add(velocity, Vector3Scale(Vector3Negate(gravity), character->jumpSpeed));
+      velocity = Vector3Add(velocity, Vector3Scale(Vector3Negate(gravityDir), character->jumpSpeed));
     }
   } else {
-    Vector3Add(velocity, Vector3Scale(gravity, delta));
+    // Re-introduce existing gravity
+    velocity = Vector3Add(movement, Vector3Scale(gravityDir, applied));
+
+    // Add some new gravity this update
+    velocity = Vector3Add(velocity, Vector3Scale(gravity, delta));
   }
 
   if (Vector3Length(movement) >= 0.01f) {
