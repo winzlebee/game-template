@@ -21,7 +21,7 @@ typedef struct {
 } Client;
 
 typedef struct {
-  uint32_t   netId;     // entity occupying this slot in this snapshot; 0 = empty
+  uint32_t   netId;
   Vector3    position;
   Quaternion rotation;
   uint32_t   meshIndex;
