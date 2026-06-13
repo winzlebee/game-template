@@ -7,18 +7,39 @@
 #include <stdlib.h>
 #include <time.h>
 
-// --- Constants --------------------------------------------------------------
-
 #define FLOOR_HALF_EXTENT 50.0f
 #define PLAYER_SPEED       5.0f
 #define JUMP_SPEED         6.0f
+#define DELTA_EPSILON      1e-3f
 
 typedef struct {
   NBN_ConnectionHandle handle;
   Entity   entity;
-  Vector3  input;   // latest movement input from client
-  bool     jump;    // latest jump flag
+  Vector3  input;
+  bool     jump;
 } ClientSlot;
+
+typedef struct {
+  uint32_t ackTick;
+} ClientTracking;
+
+typedef struct {
+  uint32_t netId;
+  PhysicsShapeType   shapeType;
+  PhysicsBodyType    bodyType;
+  PhysicsShapeParams shapeParams;
+  uint32_t   meshIndex;
+  Vector3    position;
+  Quaternion rotation;
+} EntitySnapshot;
+
+// Complete snapshot of every entity.
+typedef struct {
+  // Zero represents an empty snapshot slot
+  uint32_t tick;
+  uint32_t entityCount;
+  EntitySnapshot entities[MAX_ENTITIES];
+} Snapshot;
 
 static ClientSlot  g_Clients[MAX_CLIENTS];
 static uint32_t    g_ClientCount;
@@ -31,39 +52,75 @@ static Vector3 g_SpawnPoints[] = {
     (Vector3){  FLOOR_HALF_EXTENT / 2.0f - 1.5f, 0,  FLOOR_HALF_EXTENT / 2.0f - 1.5f },
 };
 
-// --- Helpers ----------------------------------------------------------------
+// Information about which was the last snapshot each client received
+static ClientTracking g_ClientTracking[MAX_CLIENTS];
+
+// Ring buffer of *complete* snapshots for the last SNAPSHOT_BUFFER_SIZE ticks
+static Snapshot g_Snapshots[SNAPSHOT_BUFFER_SIZE];
+
+// This starts at one because zero-ticks are used to represent unallocated
+// snapshot slots in both the server and client.
+static uint32_t g_Tick = 1;
 
 static void AcceptConnection(Vector3 spawn, NBN_ConnectionHandle handle, uint32_t netId)
 {
-  NBN_WriteStream ws;
+  NBN_WriteStream writeStream;
   uint8_t data[sizeof(SpawnClientMessage)];
 
-  NBN_WriteStream_Init(&ws, data, sizeof(SpawnClientMessage));
+  NBN_WriteStream_Init(&writeStream, data, sizeof(SpawnClientMessage));
 
   SpawnClientMessage scm = {
     .sX = spawn.x, .sY = spawn.y, .sZ = spawn.z,
     .netId = netId,
     .handle = handle
   };
-  SpawnClientMessage_Serialize(&scm, (NBN_Stream *)&ws);
+
+  SpawnClientMessage_Serialize(&scm, (NBN_Stream *)&writeStream);
   NBN_GameServer_AcceptIncomingConnectionWithData(data, sizeof(data));
 }
 
-static ClientSlot *FindSlotByHandle(NBN_ConnectionHandle h)
+static ClientSlot *FindSlotByHandle(NBN_ConnectionHandle handle)
 {
-  for (uint32_t i = 0; i < MAX_CLIENTS; i++)
-    if (g_Clients[i].handle == h) return &g_Clients[i];
+  for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+    if (g_Clients[i].handle == handle) {
+      return &g_Clients[i];
+    }
+  }
+
   return NULL;
 }
 
 static ClientSlot *FindEmptySlot(void)
 {
-  for (uint32_t i = 0; i < MAX_CLIENTS; i++)
-    if (g_Clients[i].handle == EMPTY_SLOT) return &g_Clients[i];
+  for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+    if (g_Clients[i].handle == EMPTY_SLOT) {
+      return &g_Clients[i];
+    }
+  }
   return NULL;
 }
 
-// --- Server events ----------------------------------------------------------
+static ClientTracking *FindTrackingByHandle(NBN_ConnectionHandle handle)
+{
+  for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+    if (g_Clients[i].handle == handle) {
+      return &g_ClientTracking[i];
+    }
+  }
+
+  return NULL;
+}
+
+static bool PoseChanged(const EntitySnapshot *seA, const EntitySnapshot *seB)
+{
+  return fabsf(seA->position.x - seB->position.x) > DELTA_EPSILON
+      || fabsf(seA->position.y - seB->position.y) > DELTA_EPSILON
+      || fabsf(seA->position.z - seB->position.z) > DELTA_EPSILON
+      || fabsf(seA->rotation.x - seB->rotation.x) > DELTA_EPSILON
+      || fabsf(seA->rotation.y - seB->rotation.y) > DELTA_EPSILON
+      || fabsf(seA->rotation.z - seB->rotation.z) > DELTA_EPSILON
+      || fabsf(seA->rotation.w - seB->rotation.w) > DELTA_EPSILON;
+}
 
 static void HandleNewConnection(void)
 {
@@ -76,22 +133,26 @@ static void HandleNewConnection(void)
   }
 
   NBN_ConnectionHandle handle = NBN_GameServer_GetIncomingConnection();
-  Vector3 spawn = Vector3Zero();//g_SpawnPoints[handle % MAX_CLIENTS];
 
-  Entity e = ECS_CreateEntity(&g_World);
-  uint32_t netId = ECS_GetNetId(&g_World, e);
+  const Vector3 spawnPoint = g_SpawnPoints[handle % MAX_CLIENTS];
+  const uint32_t meshIndex = (uint32_t)(rand() % MESH_COUNT);
 
-  AcceptConnection(spawn, handle, netId);
+  const Entity entityId = ECS_CreateEntity(&g_World);
+  const uint32_t netId  = ECS_GetNetId(&g_World, entityId);
 
-  ECS_AddCharacter(&g_World, e, spawn, PLAYER_SPEED, JUMP_SPEED);
+  AcceptConnection(spawnPoint, handle, netId);
 
-  uint32_t meshIndex = (uint32_t)(rand() % MESH_COUNT);
-  ECS_AddMesh(&g_World, e, meshIndex);
+  ECS_AddCharacter(&g_World, entityId, spawnPoint, PLAYER_SPEED, JUMP_SPEED);
+  ECS_AddMesh(&g_World, entityId, meshIndex);
 
   ClientSlot *slot = FindEmptySlot();
   memset(slot, 0, sizeof(*slot));
   slot->handle = handle;
-  slot->entity = e;
+  slot->entity = entityId;
+
+  // Reset tracking for this client slot so the first message is a full send
+  memset(&g_ClientTracking[slot - g_Clients], 0, sizeof(ClientTracking));
+
   g_ClientCount++;
 
   TraceLog(LOG_INFO, "Player connected (handle: %d, netId: %u, mesh: %u)",
@@ -128,23 +189,36 @@ static void HandleReceivedMessage(void)
       PlayerInputMessage *msg = info.data;
       slot->input = (Vector3){msg->x, 0.0f, msg->z};
       slot->jump  = msg->jump;
+
+      // Record the snapshot ack. Reject ticks we have not produced yet:
+      // either we have a bug, or they're an untrusted client...
+      ClientTracking *track = FindTrackingByHandle(info.sender);
+
+      assert(msg->lastReceivedTick < g_Tick &&
+             "Client sent an ACK newer than the server's latest one");
+
+      if (msg->lastReceivedTick > track->ackTick && msg->lastReceivedTick < g_Tick) {
+        track->ackTick = msg->lastReceivedTick;
+      }
+
       PlayerInputMessage_Destroy(msg);
       break;
     }
+    default:
+      assert(false && "Unknown message from client");
   }
 }
 
-static int HandleGameServerEvent(int ev)
+static int HandleGameServerEvent(int event)
 {
-  switch (ev) {
+  switch (event) {
     case NBN_NEW_CONNECTION:       HandleNewConnection();        break;
     case NBN_CLIENT_DISCONNECTED:  HandleClientDisconnection();  break;
     case NBN_CLIENT_MESSAGE_RECEIVED: HandleReceivedMessage();   break;
+    default: assert(false && "Unknown network event");
   }
   return 0;
 }
-
-// --- Tick: apply buffered input to all characters ---------------------------
 
 static void ApplyAllCharacterInputs(float delta)
 {
@@ -156,59 +230,138 @@ static void ApplyAllCharacterInputs(float delta)
 
     ECS_UpdateCharacter(&g_World, g_Clients[i].entity, delta,
                         g_Clients[i].input, g_Clients[i].jump);
-    // Clear one-shot jump
-    g_Clients[i].jump = 0;
   }
 }
 
-// --- Snapshot broadcast -----------------------------------------------------
-
-typedef struct {
-  ECSWorld *world;
-  PhysicsStateMessage *msg;
-} SnapshotCtx;
-
-static int SnapshotToMessage(Entity e, ECSWorld *world, void *userdata)
+static Snapshot *TakeSnapshot(void)
 {
-  SnapshotCtx *ctx = (SnapshotCtx *)userdata;
+  Snapshot *snap = &g_Snapshots[g_Tick % SNAPSHOT_BUFFER_SIZE];
 
-  PhysicsEntityState *s = &ctx->msg->entities[ctx->msg->entityCount++];
-  s->netId     = ECS_GetNetId(world, e);
-  s->meshIndex = world->meshComponents[e].meshIndex;
-  s->transform = world->transforms[e].matrix;
+  snap->tick = g_Tick;
+  snap->entityCount = 0;
 
-  // Mark character entities for the client
-  if (world->masks[e] & COMPONENT_CHARACTER) {
-    s->shapeType = PST_CYLINDER;
-    s->bodyType  = PBT_DYNAMIC;
-    s->shapeParams.cyl.radius     = 0.4f;
-    s->shapeParams.cyl.halfLength = 0.8f;
-  } else {
-    PhysicsComponent *pc = &world->physComponents[e];
-    s->shapeType   = pc->shape.type;
-    s->bodyType    = pc->body.type;
-    s->shapeParams = pc->shape.params;
+  for (Entity entityId = 0; entityId < MAX_ENTITIES; entityId++) {
+    if ((g_World.masks[entityId] & RENDERABLE_MASK) != RENDERABLE_MASK) {
+      continue;
+    }
+
+    EntitySnapshot *entitySnapshot = &snap->entities[snap->entityCount++];
+    Vector3 scale;
+
+    entitySnapshot->netId     = g_World.netIds[entityId];
+    entitySnapshot->meshIndex = g_World.meshComponents[entityId].meshIndex;
+
+    MatrixDecompose(g_World.transforms[entityId].matrix,
+                    &entitySnapshot->position, &entitySnapshot->rotation,
+                    &scale);
+
+    // Explicitly mark character entities for the client
+    if (g_World.masks[entityId] & COMPONENT_CHARACTER) {
+      entitySnapshot->shapeType = PST_CYLINDER;
+      entitySnapshot->bodyType  = PBT_DYNAMIC;
+      entitySnapshot->shapeParams.cyl.radius     = 0.4f;
+      entitySnapshot->shapeParams.cyl.halfLength = 0.8f;
+    } else {
+      PhysicsComponent *physics = &g_World.physComponents[entityId];
+      entitySnapshot->shapeType   = physics->shape.type;
+      entitySnapshot->bodyType    = physics->body.type;
+      entitySnapshot->shapeParams = physics->shape.params;
+    }
   }
 
-  return 0;
+  return snap;
 }
 
-static void BroadcastPhysicsState(void)
+static const Snapshot *FindBaseline(const ClientTracking *track)
+{
+  if (track->ackTick == 0 || g_Tick - track->ackTick >= SNAPSHOT_BUFFER_SIZE) {
+    return NULL;
+  }
+
+  const Snapshot *snap = &g_Snapshots[track->ackTick % SNAPSHOT_BUFFER_SIZE];
+  return snap->tick == track->ackTick ? snap : NULL;
+}
+
+// Snapshots list entities in ECS order, so an unchanged entity set yields
+// identical lists and entities at equal indices correspond to each other.
+static bool SameEntitySet(const Snapshot *snapA, const Snapshot *snapB)
+{
+  if (snapA->entityCount != snapB->entityCount) {
+    return false;
+  }
+
+  for (uint32_t i = 0; i < snapA->entityCount; i++) {
+    if (snapA->entities[i].netId != snapB->entities[i].netId) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static void SendFullState(NBN_ConnectionHandle handle, const Snapshot *current)
+{
+  PhysicsStateMessage *msg = PhysicsStateMessage_Create();
+
+  msg->tick = current->tick;
+  msg->entityCount = current->entityCount;
+
+  for (uint32_t i = 0; i < current->entityCount; i++) {
+    const EntitySnapshot *eSnapshot = &current->entities[i];
+    PhysicsEntityState   *pState = &msg->entities[i];
+
+    pState->netId       = eSnapshot->netId;
+    pState->shapeType   = eSnapshot->shapeType;
+    pState->bodyType    = eSnapshot->bodyType;
+    pState->shapeParams = eSnapshot->shapeParams;
+    pState->meshIndex   = eSnapshot->meshIndex;
+    pState->position    = eSnapshot->position;
+    pState->rotation    = eSnapshot->rotation;
+  }
+
+  NBN_GameServer_SendUnreliableMessageTo(handle, PHYSICS_STATE_MESSAGE, msg);
+}
+
+static void SendDelta(NBN_ConnectionHandle handle, const Snapshot *current, const Snapshot *baseline)
+{
+  PhysicsDeltaMessage *msg = PhysicsDeltaMessage_Create();
+
+  msg->tick         = current->tick;
+  msg->baselineTick = baseline->tick;
+  msg->entityCount  = 0;
+
+  for (uint32_t i = 0; i < current->entityCount; i++) {
+    if (!PoseChanged(&current->entities[i], &baseline->entities[i])) {
+      continue;
+    }
+
+    uint32_t n = msg->entityCount++;
+    msg->netIds[n]    = current->entities[i].netId;
+    msg->positions[n] = current->entities[i].position;
+    msg->rotations[n] = current->entities[i].rotation;
+  }
+
+  NBN_GameServer_SendUnreliableMessageTo(handle, PHYSICS_DELTA_MESSAGE, msg);
+}
+
+static void BroadcastPhysicsState(const Snapshot *current)
 {
   for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
-    if (g_Clients[i].handle == EMPTY_SLOT) continue;
+    if (g_Clients[i].handle == EMPTY_SLOT) {
+      continue;
+    }
 
-    PhysicsStateMessage *msg = PhysicsStateMessage_Create();
-    msg->entityCount = 0;
+    const Snapshot *baseline = FindBaseline(&g_ClientTracking[i]);
 
-    SnapshotCtx ctx = {.world = &g_World, .msg = msg};
-    ECS_ForEach(&g_World, COMPONENT_TRANSFORM | COMPONENT_MESH, SnapshotToMessage, &ctx);
-
-    NBN_GameServer_SendUnreliableMessageTo(g_Clients[i].handle, PHYSICS_STATE_MESSAGE, msg);
+    // Spawned/destroyed entities need creation data or removal, both of
+    // which only the full snapshot carries.
+    if (baseline && SameEntitySet(current, baseline)) {
+      SendDelta(g_Clients[i].handle, current, baseline);
+    } else {
+      SendFullState(g_Clients[i].handle, current);
+    }
   }
 }
-
-// --- Main loop --------------------------------------------------------------
 
 static bool running = true;
 
@@ -237,6 +390,10 @@ int main(int argc, char *argv[])
       PHYSICS_STATE_MESSAGE, (NBN_MessageBuilder)PhysicsStateMessage_Create,
       (NBN_MessageDestructor)PhysicsStateMessage_Destroy,
       (NBN_MessageSerializer)PhysicsStateMessage_Serialize);
+  NBN_GameServer_RegisterMessage(
+      PHYSICS_DELTA_MESSAGE, (NBN_MessageBuilder)PhysicsDeltaMessage_Create,
+      (NBN_MessageDestructor)PhysicsDeltaMessage_Destroy,
+      (NBN_MessageSerializer)PhysicsDeltaMessage_Serialize);
 
   NBN_GameServer_SetPing(GetOptions().ping);
   NBN_GameServer_SetJitter(GetOptions().jitter);
@@ -262,26 +419,30 @@ int main(int argc, char *argv[])
 
   for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
     g_Clients[i].handle = EMPTY_SLOT;
+    memset(&g_ClientTracking[i], 0, sizeof(ClientTracking));
   }
 
   while (running) {
 
-    int ev;
-    while ((ev = NBN_GameServer_Poll()) != NBN_NO_EVENT) {
+    int networkEvent;
 
-      if (ev < 0) {
+    while ((networkEvent = NBN_GameServer_Poll()) != NBN_NO_EVENT) {
+
+      if (networkEvent < 0) {
         running = false;
         break;
       }
 
-      HandleGameServerEvent(ev);
+      HandleGameServerEvent(networkEvent);
     }
 
     ApplyAllCharacterInputs(delta);
 
     ECS_Update(&g_World, delta);
-    BroadcastPhysicsState();
+    BroadcastPhysicsState(TakeSnapshot());
     NBN_GameServer_SendPackets();
+
+    g_Tick++;
 
 #if defined(_WIN32) || defined(_WIN64)
     Sleep((DWORD)(delta * 1000));

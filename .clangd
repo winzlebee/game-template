@@ -17,6 +17,7 @@ Diagnostics:
       - readability-uppercase-literal-suffix
       - readability-function-cognitive-complexity
       - readability-magic-numbers
+      - readability-isolate-declaration
 
 ---
 If:
