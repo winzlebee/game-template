@@ -1,3 +1,4 @@
+#include "message.h"
 #include "physics.h"
 
 #include "joltc.h"
@@ -79,8 +80,7 @@ int PhysicsWorldCreate(PhysicsWorld *world)
   // Create pass-through filters for CharacterVirtual
   world->impl->charBodyFilter  = JPH_BodyFilter_Create(NULL);
   world->impl->charShapeFilter = JPH_ShapeFilter_Create(NULL);
-
-  world->delta = 1.0f / 60.0f;
+  world->delta = 1.0f / TICK_RATE;
 
   return 0;
 }
