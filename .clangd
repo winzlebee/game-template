@@ -15,6 +15,7 @@ Diagnostics:
     Remove:
       - modernize-use-trailing-return-type
       - readability-uppercase-literal-suffix
+      - readability-function-cognitive-complexity
       - readability-magic-numbers
 
 ---
