@@ -99,8 +99,8 @@ void ECS_AddCharacter(ECSWorld *world, Entity entity, Vector3 position,
 
   PhysicsCharacterSettings settings = PhysicsCharacterDefaultSettings();
 
-  settings.halfHeight = 0.8f;
-  settings.radius = 0.4f;
+  settings.halfHeight = 1.0f;
+  settings.radius = 0.75f;
   settings.mass = 70.0f;
 
   world->charComponents[entity].character = PhysicsWorldAddCharacter(&world->physWorld, &settings, position);

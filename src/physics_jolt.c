@@ -169,6 +169,12 @@ void PhysicsWorldUpdateBody(PhysicsWorld *world, PhysicsBodyID bodyId, PhysicsBo
     (JPH_Vec3 *)&body->angularVelocity);
 }
 
+void PhysicsWorldApplyCentralForce(PhysicsWorld *world, PhysicsBodyID bodyId, Vector3 force)
+{
+  JPH_BodyInterface_AddForce(world->impl->bodyInterface, bodyId,
+                             (JPH_Vec3 *)&force);
+}
+
 void PhysicsWorldSetBodyVelocity(PhysicsWorld *world, PhysicsBodyID bodyId, Vector3 velocity)
 {
   JPH_BodyInterface_SetLinearVelocity(world->impl->bodyInterface, bodyId,
