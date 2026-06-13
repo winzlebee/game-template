@@ -259,8 +259,8 @@ static Snapshot *TakeSnapshot(void)
     if (g_World.masks[entityId] & COMPONENT_CHARACTER) {
       entitySnapshot->shapeType = PST_CYLINDER;
       entitySnapshot->bodyType  = PBT_DYNAMIC;
-      entitySnapshot->shapeParams.cyl.radius     = 0.4f;
-      entitySnapshot->shapeParams.cyl.halfLength = 0.8f;
+      entitySnapshot->shapeParams.cyl.radius     = 0.75f;
+      entitySnapshot->shapeParams.cyl.halfLength = 1.0f;
     } else {
       PhysicsComponent *physics = &g_World.physComponents[entityId];
       entitySnapshot->shapeType   = physics->shape.type;

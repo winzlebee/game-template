@@ -88,6 +88,7 @@ PhysicsCharacter         PhysicsWorldAddCharacter(PhysicsWorld *world, const Phy
 void                     PhysicsWorldDestroyCharacter(PhysicsWorld *world, PhysicsCharacter character);
 void                     PhysicsWorldUpdateCharacter(PhysicsWorld *world, PhysicsCharacter *character, float delta);
 
+void          PhysicsWorldApplyCentralForce(PhysicsWorld *world, PhysicsBodyID bodyId, Vector3 force);
 void          PhysicsWorldSetBodyVelocity(PhysicsWorld *world, PhysicsBodyID bodyId, Vector3 velocity);
 Vector3       PhysicsWorldGetBodyVelocity(PhysicsWorld *world, PhysicsBodyID bodyId);
 
