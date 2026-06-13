@@ -19,6 +19,8 @@ typedef enum {
   COMPONENT_CHARACTER = 0x08,
 } ComponentType;
 
+#define RENDERABLE_MASK (COMPONENT_MESH | COMPONENT_TRANSFORM)
+
 typedef struct {
   Matrix matrix;
 } TransformComponent;

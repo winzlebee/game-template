@@ -18,10 +18,22 @@
 #define GROWTH_PROTOCOL_NAME "growth-net"
 #define GROWTH_PORT 42042
 
-#define TICK_RATE 30
+#define TICK_RATE 60
 #define MAX_CLIENTS 8
 #define EMPTY_SLOT ((uint32_t) -1)
 #define SERVER_FULL_CODE 42
+
+/**
+ * Number of past snapshots kept for delta compression. The server can delta
+ * against any of the last SNAPSHOT_BUFFER_SIZE - 1 ticks; the client keeps
+ * the same window of received samples per entity.
+ */
+#define SNAPSHOT_BUFFER_SIZE 32
+
+/**
+ * How many ticks the client renders behind the newest received snapshot.
+ */
+#define INTERP_DELAY_TICKS 3
 
 #define MIN_FLOAT_VAL -10000
 #define MAX_FLOAT_VAL  10000
@@ -34,6 +46,7 @@ enum
   UPDATE_STATE_MESSAGE,
   GAME_STATE_MESSAGE,
   PHYSICS_STATE_MESSAGE,
+  PHYSICS_DELTA_MESSAGE,
 };
 
 typedef struct {
@@ -45,6 +58,7 @@ typedef struct {
 typedef struct {
   float x, y, z;
   bool jump;
+  uint32_t lastReceivedTick;
 } PlayerInputMessage;
 
 typedef struct {
@@ -53,13 +67,24 @@ typedef struct {
   PhysicsBodyType bodyType;
   PhysicsShapeParams shapeParams;
   uint32_t meshIndex;
-  Matrix transform;
+  Vector3 position;
+  Quaternion rotation;
 } PhysicsEntityState;
 
 typedef struct {
+  uint32_t tick;
   uint32_t entityCount;
   PhysicsEntityState entities[MAX_ENTITIES];
 } PhysicsStateMessage;
+
+typedef struct {
+  uint32_t   tick;
+  uint32_t   baselineTick;
+  uint32_t   entityCount;
+  uint32_t   netIds[MAX_ENTITIES];
+  Vector3    positions[MAX_ENTITIES];
+  Quaternion rotations[MAX_ENTITIES];
+} PhysicsDeltaMessage;
 
 typedef struct {
   float packet_loss;
@@ -79,6 +104,10 @@ int PlayerInputMessage_Serialize(PlayerInputMessage*, NBN_Stream*);
 PhysicsStateMessage* PhysicsStateMessage_Create(void);
 void PhysicsStateMessage_Destroy(PhysicsStateMessage*);
 int PhysicsStateMessage_Serialize(PhysicsStateMessage*, NBN_Stream*);
+
+PhysicsDeltaMessage* PhysicsDeltaMessage_Create(void);
+void PhysicsDeltaMessage_Destroy(PhysicsDeltaMessage*);
+int PhysicsDeltaMessage_Serialize(PhysicsDeltaMessage*, NBN_Stream*);
 
 int ReadCommandLine(int, char*[]);
 Options GetOptions(void);

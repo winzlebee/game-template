@@ -15,15 +15,34 @@
 #define GAME_HEIGHT 800
 
 typedef struct {
-  Matrix   matrix;
-  Matrix   prevMatrix;
-  uint32_t meshIndex;
-  bool     alive;
+  uint32_t netId;
+  bool     connected;
+  bool     disconnected;
+} Client;
+
+typedef struct {
+  uint32_t   netId;
+  Vector3    position;
+  Quaternion rotation;
+  uint32_t   meshIndex;
 } RenderSlot;
 
-static RenderSlot g_Render[MAX_ENTITIES];
-static Model      g_Meshes[MESH_COUNT];
-static bool       g_MeshesLoaded;
+#define INVALID_RENDER_SLOT UINT32_MAX
+
+typedef struct {
+  uint32_t   tick;
+  RenderSlot slots[MAX_ENTITIES];
+} Snapshot;
+
+static Client g_Client;
+
+static Snapshot g_Snapshots[SNAPSHOT_BUFFER_SIZE];
+static uint32_t g_SlotNetId[MAX_ENTITIES];
+static uint32_t g_LatestTick;
+static double   g_LatestTickTime;
+
+static Model g_Meshes[MESH_COUNT];
+static bool  g_MeshesLoaded;
 
 static bool LoadMeshes(void)
 {
@@ -44,38 +63,149 @@ static void UnloadMeshes(void)
   }
 }
 
-static void RenderSlotsClear(void)
+static uint32_t FindRenderSlot(uint32_t netId)
 {
-  memset(g_Render, 0, sizeof(g_Render));
+  if (netId == 0) {
+    return INVALID_RENDER_SLOT;
+  }
+
+  for (uint32_t sIdx = 0; sIdx < MAX_ENTITIES; sIdx++) {
+    if (g_SlotNetId[sIdx] == netId) {
+      return sIdx;
+    }
+  }
+
+  return INVALID_RENDER_SLOT;
 }
 
-typedef struct {
-  uint32_t netId;
-  bool     connected;
-  bool     disconnected;
-} Client;
+static uint32_t FindOrCreateRenderSlot(uint32_t netId)
+{
+  if (netId == 0) {
+    return INVALID_RENDER_SLOT;
+  }
 
-static Client g_Client;
-static double g_LastTime;
+  uint32_t freeSlot = INVALID_RENDER_SLOT;
+
+  for (uint32_t slotIdx = 0; slotIdx < MAX_ENTITIES; slotIdx++) {
+    if (g_SlotNetId[slotIdx] == netId) {
+      return slotIdx;
+    }
+
+    if (g_SlotNetId[slotIdx] == 0 && freeSlot == INVALID_RENDER_SLOT) {
+      freeSlot = slotIdx;
+    }
+  }
+
+  if (freeSlot != INVALID_RENDER_SLOT) {
+    g_SlotNetId[freeSlot] = netId;
+  }
+
+  return freeSlot;
+}
+
+static void SnapshotsClear(void)
+{
+  memset(g_Snapshots, 0, sizeof(g_Snapshots));
+  memset(g_SlotNetId, 0, sizeof(g_SlotNetId));
+  g_LatestTick = 0;
+}
+
+static Snapshot *SnapshotAt(uint32_t tick)
+{
+  if (tick == 0) {
+    return NULL;
+  }
+
+  Snapshot *snap = &g_Snapshots[tick % SNAPSHOT_BUFFER_SIZE];
+
+  if (snap->tick != tick) {
+    TraceLog(LOG_DEBUG, "SnapshotAt miss: want %u, slot has %u", tick, snap->tick);
+    return NULL;
+  }
+
+  return snap;
+}
+
+static double CurrentRenderTick(void)
+{
+  const double renderTickAtMessageTime = ((double) g_LatestTick) - INTERP_DELAY_TICKS;
+  const double timeSinceLastMessage    = (GetTime() - g_LatestTickTime);
+  const double ticksSinceLastMessage   = (timeSinceLastMessage * TICK_RATE);
+  const double interpolatedTick        = (renderTickAtMessageTime + ticksSinceLastMessage);
+  return fmin(interpolatedTick, g_LatestTick);
+}
+
+static void FindBracket(double renderTick, const Snapshot **before, const Snapshot **after)
+{
+  *before = NULL;
+  *after  = NULL;
+
+  for (uint32_t i = 0; i < SNAPSHOT_BUFFER_SIZE; i++) {
+    const Snapshot *snap = &g_Snapshots[i];
+
+    if (snap->tick == 0) {
+      continue;
+    }
+
+    if ((double)snap->tick <= renderTick) {
+      if (!*before || snap->tick > (*before)->tick) {
+        *before = snap;
+      }
+    } else {
+      if (!*after || snap->tick < (*after)->tick) {
+        *after = snap;
+      }
+    }
+  }
+
+  if (!*before) {
+    *before = *after;
+  }
+
+  if (!*after) {
+     *after  = *before;
+  }
+}
+
+static float BracketAlpha(const Snapshot *before, const Snapshot *after, double renderTick)
+{
+  if (after->tick <= before->tick) {
+    return 0.0f;
+  }
+
+  const double alpha = (renderTick - before->tick) / (double)(after->tick - before->tick);
+  return Clamp((float)alpha, 0.0f, 1.0f);
+}
 
 static Vector3 GetPlayerPosition(void)
 {
-  if (!g_Client.connected) {
+  if (!g_Client.connected || g_LatestTick == 0) {
     return Vector3Zero();
   }
 
-  RenderSlot *slot = &g_Render[g_Client.netId];
+  const uint32_t slotIdx = FindRenderSlot(g_Client.netId);
 
-  if (!slot->alive) {
+  if (slotIdx == INVALID_RENDER_SLOT) {
     return Vector3Zero();
   }
 
-  const Vector3 previous = (Vector3){slot->prevMatrix.m12, slot->prevMatrix.m13, slot->prevMatrix.m14};
-  const Vector3 current  = (Vector3){slot->matrix.m12, slot->matrix.m13, slot->matrix.m14};
-  const float elapsed    = (float) (GetTime() - g_LastTime);
-  const float singleTick = 1.0f / (float) TICK_RATE;
+  const double renderTick = CurrentRenderTick();
+  const Snapshot *before, *after;
+  FindBracket(renderTick, &before, &after);
 
-  return Vector3Lerp(previous, current, Clamp(elapsed / singleTick, 0.0f, 1.0f));
+  if (!before) {
+    return Vector3Zero();
+  }
+
+  const RenderSlot *prev = &before->slots[slotIdx];
+  const RenderSlot *cur  = &after->slots[slotIdx];
+
+  // The slot must hold the same entity in both bracketing snapshots.
+  if (prev->netId != g_Client.netId || cur->netId != g_Client.netId) {
+    return Vector3Zero();
+  }
+
+  return Vector3Lerp(prev->position, cur->position, BracketAlpha(before, after, renderTick));
 }
 
 static void HandleConnectionAccepted(void)
@@ -83,7 +213,7 @@ static void HandleConnectionAccepted(void)
   uint8_t data[NBN_SERVER_DATA_MAX_SIZE];
   unsigned int len = NBN_GameClient_ReadServerData(data);
 
-  RenderSlotsClear();
+  SnapshotsClear();
 
   NBN_ReadStream stream;
   NBN_ReadStream_Init(&stream, data, len);
@@ -105,19 +235,105 @@ static void HandleDisconnection(void)
 
 static void HandlePhysicsState(PhysicsStateMessage *msg)
 {
-  for (uint32_t i = 0; i < msg->entityCount; i++) {
-    PhysicsEntityState *state = &msg->entities[i];
-    RenderSlot *slot = &g_Render[state->netId];
+  // Winfried Holzapfel <me@wrhol.com>
+  //
+  // Note for posterity here. The server keeps track of the entities in
+  // the last ack'd message, then sends a full state update again if the
+  // set doesn't match for that client. So don't stress reading this
+  // code thinking that we'll get a PhysicsDeltaMessage coming through
+  // when we haven't ack'd this state update.
+  //
+  // Quake 3 networking for example makes this state update message reliable
+  // and ordered, but I think that's overkill. If this starts to suck, let's
+  // just throttle state messages for clients that aren't responding for a while.
 
-    slot->prevMatrix = slot->matrix;
-    slot->matrix     = state->transform;
-    slot->meshIndex  = state->meshIndex;
-    slot->alive      = true;
+  if (msg->tick <= g_LatestTick) {
+    PhysicsStateMessage_Destroy(msg);
+    return;
   }
 
-  g_LastTime = GetTime();
+  // Clear NetID slots for entities which no longer exist
+  for (uint32_t sIdx = 0; sIdx < MAX_ENTITIES; sIdx++) {
+    if (g_SlotNetId[sIdx] == 0) {
+      continue;
+    }
+
+    bool present = false;
+    for (uint32_t i = 0; i < msg->entityCount; i++) {
+      if (msg->entities[i].netId == g_SlotNetId[sIdx]) {
+        present = true;
+        break;
+      }
+    }
+
+    if (!present) {
+      g_SlotNetId[sIdx] = 0;
+    }
+  }
+
+  Snapshot *snap = &g_Snapshots[msg->tick % SNAPSHOT_BUFFER_SIZE];
+
+  memset(snap->slots, 0, sizeof(snap->slots));
+  snap->tick = msg->tick;
+
+  for (uint32_t i = 0; i < msg->entityCount; i++) {
+    PhysicsEntityState *state = &msg->entities[i];
+
+    const uint32_t slotIdx = FindOrCreateRenderSlot(state->netId);
+
+    if (slotIdx == INVALID_RENDER_SLOT) {
+      // The server can't generate this. The only way is if the packet was modified.
+      // This check is because we consider packets untrusted.
+      continue;
+    }
+
+    RenderSlot *slot = &snap->slots[slotIdx];
+    slot->netId     = state->netId;
+    slot->position  = state->position;
+    slot->rotation  = QuaternionNormalize(state->rotation);
+    slot->meshIndex = state->meshIndex;
+  }
+
+  g_LatestTick     = msg->tick;
+  g_LatestTickTime = GetTime();
 
   PhysicsStateMessage_Destroy(msg);
+}
+
+static void HandlePhysicsDelta(PhysicsDeltaMessage *msg)
+{
+  const Snapshot *baseline = SnapshotAt(msg->baselineTick);
+
+  if (msg->tick <= g_LatestTick || !baseline) {
+    PhysicsDeltaMessage_Destroy(msg);
+    return;
+  }
+
+  Snapshot *snap = &g_Snapshots[msg->tick % SNAPSHOT_BUFFER_SIZE];
+
+  if (snap != baseline) {
+    memcpy(snap->slots, baseline->slots, sizeof(snap->slots));
+  }
+
+  snap->tick = msg->tick;
+
+  for (uint32_t i = 0; i < msg->entityCount; i++) {
+    const uint32_t slotIdx = FindOrCreateRenderSlot(msg->netIds[i]);
+
+    if (slotIdx == INVALID_RENDER_SLOT) {
+      continue;
+    }
+
+    RenderSlot *slot = &snap->slots[slotIdx];
+    slot->netId    = msg->netIds[i];
+    slot->position = msg->positions[i];
+    slot->rotation = QuaternionNormalize(msg->rotations[i]);
+  }
+
+  g_LatestTick     = msg->tick;
+  g_LatestTickTime = GetTime();
+
+  PhysicsDeltaMessage_Destroy(msg);
 }
 
 static void HandleClientEvent(int event)
@@ -134,6 +350,8 @@ static void HandleClientEvent(int event)
 
       if (info.type == PHYSICS_STATE_MESSAGE) {
         HandlePhysicsState(info.data);
+      } else if (info.type == PHYSICS_DELTA_MESSAGE) {
+        HandlePhysicsDelta(info.data);
       }
 
       break;
@@ -143,53 +361,48 @@ static void HandleClientEvent(int event)
   }
 }
 
-static Matrix MatrixLerp(Matrix matA, Matrix matB, float tParam)
+static void DrawEntity(const RenderSlot *prev, const RenderSlot *cur, float alpha)
 {
-  Vector3 translationA, scaleA;
-  Vector3 translationB, scaleB;
-
-  Quaternion rotationA;
-  Quaternion rotationB;
-
-  MatrixDecompose(matA, &translationA, &rotationA, &scaleA);
-  MatrixDecompose(matB, &translationB, &rotationB, &scaleB);
-
-  Vector3 translation = Vector3Lerp(translationA, translationB, tParam);
-  Quaternion rotation = QuaternionNlerp(rotationA, rotationB, tParam);
-  Vector3 scale       = Vector3Lerp(scaleA, scaleB, tParam);
-
-  return MatrixCompose(translation, rotation, scale);
-}
-
-static void DrawEntity(uint32_t netId, RenderSlot *slot, float alpha)
-{
-  const Matrix interp = MatrixLerp(slot->prevMatrix, slot->matrix, alpha);
+  Vector3    position = Vector3Lerp(prev->position, cur->position, alpha);
+  Quaternion rotation = QuaternionNlerp(prev->rotation, cur->rotation, alpha);
+  Matrix     interp   = MatrixCompose(position, rotation, Vector3One());
 
   rlPushMatrix();
   rlLoadIdentity();
   rlMultMatrixf(MatrixToFloat(interp));
-  DrawModel(g_Meshes[slot->meshIndex], Vector3Zero(), 1.0f, WHITE);
+  DrawModel(g_Meshes[cur->meshIndex], Vector3Zero(), 1.0f, WHITE);
   rlPopMatrix();
-}
-
-static float InterpolationAlpha(void)
-{
-  double now        = GetTime();
-  float  serverTick = 1.0f / (float)TICK_RATE;
-  double elapsed    = now - g_LastTime;
-  return fminf((float)(elapsed / serverTick), 1.0f);
 }
 
 static void RenderAll(void)
 {
-  float alpha = InterpolationAlpha();
+  if (g_LatestTick == 0) {
+    return;
+  }
 
-  for (uint32_t i = 0; i < MAX_ENTITIES; i++) {
-    if (!g_Render[i].alive) {
+  const double tick = CurrentRenderTick();
+  const Snapshot *before, *after;
+
+  FindBracket(tick, &before, &after);
+
+  if (!before) {
+    return;
+  }
+
+  float alpha = BracketAlpha(before, after, tick);
+
+  for (uint32_t sIdx = 0; sIdx < MAX_ENTITIES; sIdx++) {
+    const RenderSlot *prev = &before->slots[sIdx];
+    const RenderSlot *cur  = &after->slots[sIdx];
+
+    // Draw only slots that hold the same live entity in both snapshots. A
+    // mismatch means the slot is empty or was reused, so skip it this frame
+    // rather than interpolate between two different entities.
+    if (cur->netId == 0 || prev->netId != cur->netId) {
       continue;
     }
 
-    DrawEntity(i, &g_Render[i], alpha);
+    DrawEntity(prev, cur, alpha);
   }
 }
 
@@ -223,44 +436,67 @@ int main(int argc, char *argv[])
       (NBN_MessageDestructor)PhysicsStateMessage_Destroy,
       (NBN_MessageSerializer)PhysicsStateMessage_Serialize);
 
+  NBN_GameClient_RegisterMessage(PHYSICS_DELTA_MESSAGE,
+      (NBN_MessageBuilder)PhysicsDeltaMessage_Create,
+      (NBN_MessageDestructor)PhysicsDeltaMessage_Destroy,
+      (NBN_MessageSerializer)PhysicsDeltaMessage_Serialize);
+
   NBN_GameClient_SetPing(GetOptions().ping);
   NBN_GameClient_SetJitter(GetOptions().jitter);
   NBN_GameClient_SetPacketLoss(GetOptions().packet_loss);
   NBN_GameClient_SetPacketDuplication(GetOptions().packet_duplication);
 
-  RenderSlotsClear();
+  SnapshotsClear();
   memset(&g_Client, 0, sizeof(g_Client));
 
-  OrbitCamera oc;
-  OrbitCamera_Init(&oc);
+  OrbitCamera orbitCamera;
+  OrbitCamera_Init(&orbitCamera);
   Camera3D camera;
 
-  g_LastTime = GetTime();
+  double lastInputTime = 0.0;
+  bool   jumpQueued    = false;
 
   while (!WindowShouldClose()) {
-    int ev;
+    int netEvent;
 
-    while ((ev = NBN_GameClient_Poll()) != NBN_NO_EVENT) {
-      HandleClientEvent(ev);
+    while ((netEvent = NBN_GameClient_Poll()) != NBN_NO_EVENT) {
+      HandleClientEvent(netEvent);
     }
 
     if (g_Client.connected) {
-      Vector3 input = OrbitCamera_GetInput(&camera, &g_Render[g_Client.netId].matrix);
+      jumpQueued |= IsKeyDown(KEY_SPACE);
 
-      PlayerInputMessage *umsg = PlayerInputMessage_Create();
-      umsg->x    = input.x;
-      umsg->y    = input.y;
-      umsg->z    = input.z;
-      umsg->jump = IsKeyDown(KEY_SPACE);
+      if ((GetTime() - lastInputTime) >= 1.0 / TICK_RATE) {
+        Matrix playerMatrix    = MatrixIdentity();
+        const Snapshot *latest = SnapshotAt(g_LatestTick);
+        const uint32_t slotIdx = FindRenderSlot(g_Client.netId);
 
-      NBN_GameClient_SendUnreliableMessage(UPDATE_STATE_MESSAGE, umsg);
+        if (latest && slotIdx != INVALID_RENDER_SLOT) {
+          const RenderSlot *slot = &latest->slots[slotIdx];
+          playerMatrix = MatrixCompose(slot->position, slot->rotation, Vector3One());
+        }
+
+        Vector3 input = OrbitCamera_GetInput(&camera, &playerMatrix);
+
+        PlayerInputMessage *umsg = PlayerInputMessage_Create();
+        umsg->x    = input.x;
+        umsg->y    = input.y;
+        umsg->z    = input.z;
+        umsg->jump = jumpQueued;
+        umsg->lastReceivedTick = g_LatestTick;
+
+        NBN_GameClient_SendUnreliableMessage(UPDATE_STATE_MESSAGE, umsg);
+
+        jumpQueued    = false;
+        lastInputTime = GetTime();
+      }
     }
 
     NBN_GameClient_SendPackets();
 
     Vector3 playerPos = GetPlayerPosition();
-    OrbitCamera_Update(&oc, playerPos);
-    OrbitCamera_ToCamera3D(&oc, playerPos, &camera);
+    OrbitCamera_Update(&orbitCamera, playerPos);
+    OrbitCamera_ToCamera3D(&orbitCamera, playerPos, &camera);
 
     BeginDrawing();
     ClearBackground(RAYWHITE);

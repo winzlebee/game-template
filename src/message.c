@@ -16,6 +16,8 @@ enum
   CL_OPT_JITTER,
 };
 
+#define QUAT_SMALLEST_MAX 0.7071068f
+
 static Options g_Options = {0};
 
 SpawnClientMessage* SpawnClientMessage_Create(void)
@@ -54,6 +56,7 @@ int PlayerInputMessage_Serialize(PlayerInputMessage *msg, NBN_Stream *stream)
   NBN_SerializeFloat(stream, msg->y, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
   NBN_SerializeFloat(stream, msg->z, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
   NBN_SerializeBool (stream, msg->jump);
+  NBN_SerializeUInt (stream, msg->lastReceivedTick, 0, UINT_MAX);
   return 0;
 }
 
@@ -67,15 +70,57 @@ void PhysicsStateMessage_Destroy(PhysicsStateMessage *msg)
   free(msg);
 }
 
-static void SerializeMatrix(NBN_Stream *stream, Matrix *m)
+static void SerializeQuaternion(NBN_Stream *stream, Quaternion *quaternion)
 {
-  for (int i = 0; i < 16; i++) {
-    NBN_SerializeFloat(stream, ((float *)m)[i], MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+  // Encode: Only meaningful on write
+  float comps[4] = {quaternion->x, quaternion->y, quaternion->z, quaternion->w};
+
+  uint32_t largestCoeff = 0;
+
+  for (int i = 1; i < 4; i++) {
+    if (fabsf(comps[i]) > fabsf(comps[largestCoeff])) {
+      largestCoeff = i;
+    }
   }
+
+  // Flip the whole quaternion so the dropped component is positive
+  float sign = comps[largestCoeff] < 0.0f ? -1.0f : 1.0f;
+  float coeffA = Clamp(sign * comps[(largestCoeff + 1) % 4], -QUAT_SMALLEST_MAX, QUAT_SMALLEST_MAX);
+  float coeffB = Clamp(sign * comps[(largestCoeff + 2) % 4], -QUAT_SMALLEST_MAX, QUAT_SMALLEST_MAX);
+  float coeffC = Clamp(sign * comps[(largestCoeff + 3) % 4], -QUAT_SMALLEST_MAX, QUAT_SMALLEST_MAX);
+
+  NBN_SerializeUInt (stream, largestCoeff, 0, 3);
+  NBN_SerializeFloat(stream, coeffA, -1.0f, 1.0f, 3);
+  NBN_SerializeFloat(stream, coeffB, -1.0f, 1.0f, 3);
+  NBN_SerializeFloat(stream, coeffC, -1.0f, 1.0f, 3);
+
+  // Decode: Only meaningful on read. Re-derive the missing coefficient.
+  const float dropped = sqrtf(fmaxf(
+    0.0f, 1.0f - (coeffA * coeffA) - (coeffB * coeffB) - (coeffC * coeffC)));
+
+  comps[largestCoeff]           = dropped;
+  comps[(largestCoeff + 1) % 4] = coeffA;
+  comps[(largestCoeff + 2) % 4] = coeffB;
+  comps[(largestCoeff + 3) % 4] = coeffC;
+
+  quaternion->x = comps[0];
+  quaternion->y = comps[1];
+  quaternion->z = comps[2];
+  quaternion->w = comps[3];
+}
+
+static void SerializePose(NBN_Stream *stream, Vector3 *position, Quaternion *rotation)
+{
+  NBN_SerializeFloat(stream, position->x, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+  NBN_SerializeFloat(stream, position->y, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+  NBN_SerializeFloat(stream, position->z, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
+
+  SerializeQuaternion(stream, rotation);
 }
 
 int PhysicsStateMessage_Serialize(PhysicsStateMessage *msg, NBN_Stream *stream)
 {
+  NBN_SerializeUInt(stream, msg->tick, 0, UINT_MAX);
   NBN_SerializeUInt(stream, msg->entityCount, 0, MAX_ENTITIES);
 
   for (uint32_t i = 0; i < msg->entityCount; i++) {
@@ -103,6 +148,7 @@ int PhysicsStateMessage_Serialize(PhysicsStateMessage *msg, NBN_Stream *stream)
         NBN_SerializeFloat(stream, s->shapeParams.radius, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
         break;
       case PST_CYLINDER:
+      case PST_CAPSULE:
         NBN_SerializeFloat(stream, s->shapeParams.cyl.radius, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
         NBN_SerializeFloat(stream, s->shapeParams.cyl.halfLength, MIN_FLOAT_VAL, MAX_FLOAT_VAL, 3);
         break;
@@ -110,7 +156,31 @@ int PhysicsStateMessage_Serialize(PhysicsStateMessage *msg, NBN_Stream *stream)
 
     NBN_SerializeUInt(stream, s->meshIndex, 0, UINT_MAX);
 
-    SerializeMatrix(stream, &s->transform);
+    SerializePose(stream, &s->position, &s->rotation);
+  }
+
+  return 0;
+}
+
+PhysicsDeltaMessage *PhysicsDeltaMessage_Create(void)
+{
+  return malloc(sizeof(PhysicsDeltaMessage));
+}
+
+void PhysicsDeltaMessage_Destroy(PhysicsDeltaMessage *msg)
+{
+  free(msg);
+}
+
+int PhysicsDeltaMessage_Serialize(PhysicsDeltaMessage *msg, NBN_Stream *stream)
+{
+  NBN_SerializeUInt(stream, msg->tick, 0, UINT_MAX);
+  NBN_SerializeUInt(stream, msg->baselineTick, 0, UINT_MAX);
+  NBN_SerializeUInt(stream, msg->entityCount, 0, MAX_ENTITIES);
+
+  for (uint32_t i = 0; i < msg->entityCount; i++) {
+    NBN_SerializeUInt(stream, msg->netIds[i], 0, UINT_MAX);
+    SerializePose(stream, &msg->positions[i], &msg->rotations[i]);
   }
 
   return 0;
