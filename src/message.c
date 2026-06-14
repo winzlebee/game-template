@@ -155,6 +155,7 @@ int PhysicsStateMessage_Serialize(PhysicsStateMessage *msg, NBN_Stream *stream)
     }
 
     NBN_SerializeUInt(stream, s->meshIndex, 0, UINT_MAX);
+    NBN_SerializeUInt(stream, s->animIndex, 0, UCHAR_MAX);
 
     SerializePose(stream, &s->position, &s->rotation);
   }
@@ -180,6 +181,7 @@ int PhysicsDeltaMessage_Serialize(PhysicsDeltaMessage *msg, NBN_Stream *stream)
 
   for (uint32_t i = 0; i < msg->entityCount; i++) {
     NBN_SerializeUInt(stream, msg->netIds[i], 0, UINT_MAX);
+    NBN_SerializeUInt(stream, msg->animations[i], 0, UCHAR_MAX);
     SerializePose(stream, &msg->positions[i], &msg->rotations[i]);
   }
 

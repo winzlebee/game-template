@@ -113,6 +113,7 @@ void ECS_AddCharacter(ECSWorld *world, Entity entity, Vector3 position,
 void ECS_AddMesh(ECSWorld *world, Entity entity, uint32_t meshIndex)
 {
   world->meshComponents[entity].meshIndex = meshIndex;
+  world->meshComponents[entity].animIndex = MESH_ANIMATION_NONE;
   world->masks[entity] |= COMPONENT_MESH;
 }
 
