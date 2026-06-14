@@ -23,22 +23,12 @@ typedef struct {
   uint32_t ackTick;
 } ClientTracking;
 
-typedef struct {
-  uint32_t netId;
-  PhysicsShapeType   shapeType;
-  PhysicsBodyType    bodyType;
-  PhysicsShapeParams shapeParams;
-  uint32_t   meshIndex;
-  Vector3    position;
-  Quaternion rotation;
-} EntitySnapshot;
-
 // Complete snapshot of every entity.
 typedef struct {
   // Zero represents an empty snapshot slot
   uint32_t tick;
   uint32_t entityCount;
-  EntitySnapshot entities[MAX_ENTITIES];
+  PhysicsEntityState entities[MAX_ENTITIES];
 } Snapshot;
 
 static ClientSlot  g_Clients[MAX_CLIENTS];
@@ -111,7 +101,7 @@ static ClientTracking *FindTrackingByHandle(NBN_ConnectionHandle handle)
   return NULL;
 }
 
-static bool PoseChanged(const EntitySnapshot *seA, const EntitySnapshot *seB)
+static bool PoseChanged(const PhysicsEntityState *seA, const PhysicsEntityState *seB)
 {
   return fabsf(seA->position.x - seB->position.x) > DELTA_EPSILON
       || fabsf(seA->position.y - seB->position.y) > DELTA_EPSILON
@@ -245,27 +235,28 @@ static Snapshot *TakeSnapshot(void)
       continue;
     }
 
-    EntitySnapshot *entitySnapshot = &snap->entities[snap->entityCount++];
+    PhysicsEntityState *snapshot = &snap->entities[snap->entityCount++];
     Vector3 scale;
 
-    entitySnapshot->netId     = g_World.netIds[entityId];
-    entitySnapshot->meshIndex = g_World.meshComponents[entityId].meshIndex;
+    snapshot->netId     = g_World.netIds[entityId];
+    snapshot->meshIndex = g_World.meshComponents[entityId].meshIndex;
+    snapshot->animIndex = g_World.meshComponents[entityId].animIndex;
 
     MatrixDecompose(g_World.transforms[entityId].matrix,
-                    &entitySnapshot->position, &entitySnapshot->rotation,
+                    &snapshot->position, &snapshot->rotation,
                     &scale);
 
     // Explicitly mark character entities for the client
     if (g_World.masks[entityId] & COMPONENT_CHARACTER) {
-      entitySnapshot->shapeType = PST_CYLINDER;
-      entitySnapshot->bodyType  = PBT_DYNAMIC;
-      entitySnapshot->shapeParams.cyl.radius     = 0.75f;
-      entitySnapshot->shapeParams.cyl.halfLength = 1.0f;
+      snapshot->shapeType = PST_CYLINDER;
+      snapshot->bodyType  = PBT_DYNAMIC;
+      snapshot->shapeParams.cyl.radius     = 0.75f;
+      snapshot->shapeParams.cyl.halfLength = 1.0f;
     } else {
       PhysicsComponent *physics = &g_World.physComponents[entityId];
-      entitySnapshot->shapeType   = physics->shape.type;
-      entitySnapshot->bodyType    = physics->body.type;
-      entitySnapshot->shapeParams = physics->shape.params;
+      snapshot->shapeType   = physics->shape.type;
+      snapshot->bodyType    = physics->body.type;
+      snapshot->shapeParams = physics->shape.params;
     }
   }
 
@@ -306,18 +297,7 @@ static void SendFullState(NBN_ConnectionHandle handle, const Snapshot *current)
   msg->tick = current->tick;
   msg->entityCount = current->entityCount;
 
-  for (uint32_t i = 0; i < current->entityCount; i++) {
-    const EntitySnapshot *eSnapshot = &current->entities[i];
-    PhysicsEntityState   *pState = &msg->entities[i];
-
-    pState->netId       = eSnapshot->netId;
-    pState->shapeType   = eSnapshot->shapeType;
-    pState->bodyType    = eSnapshot->bodyType;
-    pState->shapeParams = eSnapshot->shapeParams;
-    pState->meshIndex   = eSnapshot->meshIndex;
-    pState->position    = eSnapshot->position;
-    pState->rotation    = eSnapshot->rotation;
-  }
+  memcpy(msg->entities, current->entities, sizeof(current->entities));
 
   NBN_GameServer_SendUnreliableMessageTo(handle, PHYSICS_STATE_MESSAGE, msg);
 }
@@ -335,10 +315,11 @@ static void SendDelta(NBN_ConnectionHandle handle, const Snapshot *current, cons
       continue;
     }
 
-    uint32_t n = msg->entityCount++;
-    msg->netIds[n]    = current->entities[i].netId;
-    msg->positions[n] = current->entities[i].position;
-    msg->rotations[n] = current->entities[i].rotation;
+    uint32_t seIdx = msg->entityCount++;
+    msg->netIds[seIdx]     = current->entities[i].netId;
+    msg->animations[seIdx] = current->entities[i].animIndex;
+    msg->positions[seIdx]  = current->entities[i].position;
+    msg->rotations[seIdx]  = current->entities[i].rotation;
   }
 
   NBN_GameServer_SendUnreliableMessageTo(handle, PHYSICS_DELTA_MESSAGE, msg);

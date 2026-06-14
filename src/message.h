@@ -63,10 +63,14 @@ typedef struct {
 
 typedef struct {
   uint32_t netId;
+
   PhysicsShapeType shapeType;
   PhysicsBodyType bodyType;
   PhysicsShapeParams shapeParams;
+
   uint32_t meshIndex;
+  uint32_t animIndex;
+
   Vector3 position;
   Quaternion rotation;
 } PhysicsEntityState;
@@ -82,6 +86,7 @@ typedef struct {
   uint32_t   baselineTick;
   uint32_t   entityCount;
   uint32_t   netIds[MAX_ENTITIES];
+  uint32_t   animations[MAX_ENTITIES];
   Vector3    positions[MAX_ENTITIES];
   Quaternion rotations[MAX_ENTITIES];
 } PhysicsDeltaMessage;

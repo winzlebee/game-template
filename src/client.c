@@ -14,6 +14,8 @@
 #define GAME_WIDTH  1280
 #define GAME_HEIGHT 800
 
+#define ANIMATION_FRAME_RATE 15
+
 typedef struct {
   uint32_t netId;
   bool     connected;
@@ -25,6 +27,7 @@ typedef struct {
   Vector3    position;
   Quaternion rotation;
   uint32_t   meshIndex;
+  uint32_t   animIndex;
 } RenderSlot;
 
 #define INVALID_RENDER_SLOT UINT32_MAX
@@ -41,25 +44,33 @@ static uint32_t g_SlotNetId[MAX_ENTITIES];
 static uint32_t g_LatestTick;
 static double   g_LatestTickTime;
 
-static Model g_Meshes[MESH_COUNT];
-static bool  g_MeshesLoaded;
+typedef struct {
+  ModelAnimation *animations;
+  int count;
+} ModelAnimationSet;
 
-static bool LoadMeshes(void)
+static Model             g_Meshes[MESH_COUNT];
+static ModelAnimationSet g_MeshAnimations[MESH_COUNT];
+static bool              g_MeshesLoaded;
+
+static void LoadMeshes(void)
 {
   for (uint32_t i = 0; i < MESH_COUNT; i++) {
-    g_Meshes[i] = LoadModel(g_MeshFileNames[i]);
+    g_Meshes[i]                    = LoadModel(g_MeshFileNames[i]);
+    g_MeshAnimations[i].animations = LoadModelAnimations(g_MeshFileNames[i], &g_MeshAnimations[i].count);
+
     if (g_Meshes[i].meshCount == 0) {
-      TraceLog(LOG_WARNING, "Failed to load: %s", g_MeshFileNames[i]);
-      g_Meshes[i] = LoadModelFromMesh(GenMeshCube(0.5f, 0.5f, 0.5f));
+      TraceLog(LOG_ERROR, "Failed to load: %s", g_MeshFileNames[i]);
+      exit(EXIT_FAILURE);
     }
   }
-  return true;
 }
 
 static void UnloadMeshes(void)
 {
   for (uint32_t i = 0; i < MESH_COUNT; i++) {
     UnloadModel(g_Meshes[i]);
+    UnloadModelAnimations(g_MeshAnimations[i].animations, g_MeshAnimations[i].count);
   }
 }
 
@@ -292,6 +303,7 @@ static void HandlePhysicsState(PhysicsStateMessage *msg)
     slot->position  = state->position;
     slot->rotation  = QuaternionNormalize(state->rotation);
     slot->meshIndex = state->meshIndex;
+    slot->animIndex = state->animIndex;
   }
 
   g_LatestTick     = msg->tick;
@@ -325,9 +337,10 @@ static void HandlePhysicsDelta(PhysicsDeltaMessage *msg)
     }
 
     RenderSlot *slot = &snap->slots[slotIdx];
-    slot->netId    = msg->netIds[i];
-    slot->position = msg->positions[i];
-    slot->rotation = QuaternionNormalize(msg->rotations[i]);
+    slot->netId      = msg->netIds[i];
+    slot->position   = msg->positions[i];
+    slot->rotation   = QuaternionNormalize(msg->rotations[i]);
+    slot->animIndex  = msg->animations[i];
   }
 
   g_LatestTick     = msg->tick;
@@ -361,16 +374,38 @@ static void HandleClientEvent(int event)
   }
 }
 
-static void DrawEntity(const RenderSlot *prev, const RenderSlot *cur, float alpha)
+static void DrawEntity(const RenderSlot *prev, const RenderSlot *curr, float alpha)
 {
-  Vector3    position = Vector3Lerp(prev->position, cur->position, alpha);
-  Quaternion rotation = QuaternionNlerp(prev->rotation, cur->rotation, alpha);
+  assert(prev->meshIndex == curr->meshIndex && "Cannot interpolate between different meshes");
+
+  Vector3    position = Vector3Lerp(prev->position, curr->position, alpha);
+  Quaternion rotation = QuaternionNlerp(prev->rotation, curr->rotation, alpha);
   Matrix     interp   = MatrixCompose(position, rotation, Vector3One());
+
+  const double animationFrame = GetTime() / ANIMATION_FRAME_RATE;
+
+  if (prev->animIndex != MESH_ANIMATION_NONE && curr->animIndex != MESH_ANIMATION_NONE) {
+    const ModelAnimation *animA = &g_MeshAnimations[prev->meshIndex].animations[prev->animIndex];
+    const ModelAnimation *animB = &g_MeshAnimations[curr->meshIndex].animations[curr->animIndex];
+
+    const float frameA = (float) fmod(animationFrame, animA->keyframeCount);
+    const float frameB = (float) fmod(animationFrame, animB->keyframeCount);
+
+    // Both states have an animation. Blend between the two different animations.
+    UpdateModelAnimationEx(g_Meshes[curr->meshIndex], *animA, frameA, *animB, frameB, alpha);
+  } else if (curr->animIndex != MESH_ANIMATION_NONE) {
+    // The next state has an animation. Just play the new animation immediately. Ideally,
+    // we create an idle animation where needed so we're only ever blending between different
+    // animations. But this will be the case when we first start the game, for example.
+    const ModelAnimation *animation = &g_MeshAnimations[curr->meshIndex].animations[curr->animIndex];
+    const float frame = (float) fmod(animationFrame, animation->keyframeCount);
+    UpdateModelAnimation(g_Meshes[curr->meshIndex], *animation, frame);
+  }
 
   rlPushMatrix();
   rlLoadIdentity();
   rlMultMatrixf(MatrixToFloat(interp));
-  DrawModel(g_Meshes[cur->meshIndex], Vector3Zero(), 1.0f, WHITE);
+  DrawModel(g_Meshes[curr->meshIndex], Vector3Zero(), 1.0f, WHITE);
   rlPopMatrix();
 }
 
@@ -419,7 +454,7 @@ int main(int argc, char *argv[])
   SetTargetFPS(120);
 
   NBN_UDP_Register();
-  g_MeshesLoaded = LoadMeshes();
+  LoadMeshes();
 
   if (NBN_GameClient_StartEx(GROWTH_PROTOCOL_NAME, "127.0.0.1", GROWTH_PORT, NULL, 0) < 0) {
     TraceLog(LOG_ERROR, "Game client failed to start. Exit");

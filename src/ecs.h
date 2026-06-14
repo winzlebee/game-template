@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 
 #define MAX_ENTITIES   1024
 #define INVALID_ENTITY UINT16_MAX
@@ -39,7 +40,10 @@ typedef struct {
 
 typedef struct {
   uint32_t meshIndex;
+  uint32_t animIndex;
 } MeshComponent;
+
+#define MESH_ANIMATION_NONE UCHAR_MAX
 
 typedef struct {
   PhysicsWorld physWorld;
