@@ -206,7 +206,7 @@ PhysicsCharacterSettings PhysicsCharacterDefaultSettings()
   character.radius        = 0.5f;
   character.mass          = 70.0f;
   character.maxSlopeAngle = 45.0f * DEG2RAD;
-  character.maxStrength   = 100.0f;
+  character.maxStrength   = 1000.0f;
 
   return character;
 }
