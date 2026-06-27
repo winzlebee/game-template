@@ -2,8 +2,7 @@ cmake_minimum_required(VERSION 3.15)
 
 project(growth C CXX)
 
-find_package(raylib REQUIRED)
-
+add_subdirectory(extern/raylib)
 add_subdirectory(extern/joltc)
 
 include(cmake/MeshManifest.cmake)

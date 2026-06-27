@@ -1,3 +1,7 @@
 [submodule "extern/joltc"]
 	path = extern/joltc
 	url = git@github.com:amerkoleci/joltc.git
+
+[submodule "extern/raylib"]
+	path = extern/raylib
+	url = git@github.com:winzlebee/raylib.git
