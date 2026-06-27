@@ -382,7 +382,7 @@ static void DrawEntity(const RenderSlot *prev, const RenderSlot *curr, float alp
   Quaternion rotation = QuaternionNlerp(prev->rotation, curr->rotation, alpha);
   Matrix     interp   = MatrixCompose(position, rotation, Vector3One());
 
-  const double animationFrame = GetTime() / ANIMATION_FRAME_RATE;
+  const double animationFrame = GetTime() * ANIMATION_FRAME_RATE;
 
   if (prev->animIndex != MESH_ANIMATION_NONE && curr->animIndex != MESH_ANIMATION_NONE) {
     const ModelAnimation *animA = &g_MeshAnimations[prev->meshIndex].animations[prev->animIndex];
