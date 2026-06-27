@@ -14,7 +14,7 @@
 #define GAME_WIDTH  1280
 #define GAME_HEIGHT 800
 
-#define ANIMATION_FRAME_RATE 15
+#define ANIMATION_FRAME_RATE 60
 
 typedef struct {
   uint32_t netId;

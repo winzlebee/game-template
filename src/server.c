@@ -109,7 +109,8 @@ static bool PoseChanged(const PhysicsEntityState *seA, const PhysicsEntityState 
       || fabsf(seA->rotation.x - seB->rotation.x) > DELTA_EPSILON
       || fabsf(seA->rotation.y - seB->rotation.y) > DELTA_EPSILON
       || fabsf(seA->rotation.z - seB->rotation.z) > DELTA_EPSILON
-      || fabsf(seA->rotation.w - seB->rotation.w) > DELTA_EPSILON;
+      || fabsf(seA->rotation.w - seB->rotation.w) > DELTA_EPSILON
+      || seA->animIndex != seB->animIndex;
 }
 
 static void HandleNewConnection(void)
