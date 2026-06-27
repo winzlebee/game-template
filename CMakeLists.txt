@@ -18,6 +18,6 @@ target_link_libraries(${PROJECT_NAME}-server raylib joltc)
 
 target_include_directories(${PROJECT_NAME}-client PRIVATE
     ${CMAKE_SOURCE_DIR}/extern/nbnet
-    ${CMAKE_BINARY_DIR})  # for mesh_manifest.h
+    ${CMAKE_BINARY_DIR})
 
 target_include_directories(${PROJECT_NAME}-server PRIVATE ${CMAKE_SOURCE_DIR}/extern/nbnet ${CMAKE_BINARY_DIR})
