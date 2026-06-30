@@ -1,5 +1,6 @@
 #include "ecs.h"
 #include "physics.h"
+#include "mesh_manifest.h"
 
 #include <math.h>
 #include <raylib.h>
@@ -141,6 +142,12 @@ void ECS_UpdateCharacter(ECSWorld *world, Entity entity, float delta,
   // Construct final character velocity
   Vector3 velocity = movement;
 
+  if (Vector3Length(input) > 0.5) {
+    world->meshComponents[entity].animIndex = ANIM_ANIMAL_MONKEY_WALK;
+  } else {
+    world->meshComponents[entity].animIndex = ANIM_ANIMAL_MONKEY_IDLE;
+  }
+
   if (physics->onGround) {
     if (jump) {
       velocity = Vector3Add(velocity, Vector3Scale(Vector3Negate(gravityDir), character->jumpSpeed));
@@ -151,6 +158,8 @@ void ECS_UpdateCharacter(ECSWorld *world, Entity entity, float delta,
 
     // Add some new gravity this update
     velocity = Vector3Add(velocity, Vector3Scale(gravity, delta));
+
+    world->meshComponents[entity].animIndex = ANIM_ANIMAL_MONKEY_GESTURE_POSITIVE;
   }
 
   if (Vector3Length(movement) >= 0.01f) {
